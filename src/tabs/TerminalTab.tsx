@@ -71,6 +71,7 @@ export default function TerminalTab({ devinPath }: { devinPath?: string }) {
         <button onClick={() => spawn(cmdline.trim().split(/\s+/).filter(Boolean))}
           disabled={!devinPath}>인자로 시작</button>
         {ptyId && <button className="danger" onClick={() => api.ptyKill(ptyId).then(() => setPtyId(null))}>종료</button>}
+        {!ptyId && <button onClick={() => setPtyId("login")}>로그인 세션 연결</button>}
         <span className="dim small">완전한 Devin CLI REPL (ConPTY)</span>
       </div>
       <div ref={hostRef} className="term-container" />

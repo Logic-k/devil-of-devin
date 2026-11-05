@@ -109,6 +109,15 @@ impl PtySession {
         self.child.lock().kill()?;
         Ok(())
     }
+
+    /// True once the child has exited (reaps the status).
+    pub fn exited(&self) -> bool {
+        self.child
+            .lock()
+            .try_wait()
+            .map(|s| s.is_some())
+            .unwrap_or(true)
+    }
 }
 
 fn base64_encode(data: &[u8]) -> String {

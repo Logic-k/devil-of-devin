@@ -40,6 +40,7 @@ export const api = {
   developStatus: (id: string) => invoke<any>("develop_status", { id }),
 
   devinLogin: () => invoke<void>("devin_login"),
+  urlOpen: (url: string) => invoke<void>("url_open", { url }),
 
   tasksLoad: (dir: string) => invoke<any[]>("tasks_load", { dir }),
   tasksSave: (dir: string, tasks: any[]) => invoke<void>("tasks_save", { dir, tasks }),

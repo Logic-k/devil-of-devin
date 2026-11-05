@@ -25,6 +25,7 @@ export default function App() {
   const [info, setInfo] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [loginUrl, setLoginUrl] = useState<string | null>(null);
 
   const refresh = async () => {
     try { setInfo(await api.devinInfo()); } catch { setInfo(null); }
@@ -32,9 +33,29 @@ export default function App() {
   };
   useEffect(() => { refresh(); }, []);
   useEffect(() => {
-    const un = ev.loginDone(() => { setLoggingIn(false); refresh(); });
+    const un = ev.loginDone(() => { setLoggingIn(false); setLoginUrl(null); refresh(); });
     return () => { un.then((f) => f()); };
   }, []);
+
+  // watch the login PTY output for a URL to surface as a clickable button
+  useEffect(() => {
+    if (!loggingIn) return;
+    const un = ev.ptyOut("login", (p) => {
+      try {
+        const text = atob(p.data);
+        const m = text.match(/https?:\/\/[^\s"'<>()]+/);
+        if (m) setLoginUrl(m[0]);
+      } catch {}
+    });
+    const t = setTimeout(() => setLoggingIn(false), 120_000);
+    return () => { un.then((f) => f()); clearTimeout(t); };
+  }, [loggingIn]);
+
+  const startLogin = () => {
+    setLoggingIn(true);
+    setLoginUrl(null);
+    api.devinLogin().catch((e) => { setLoggingIn(false); alert(`로그인 실패: ${e}`); });
+  };
 
   return (
     <>
@@ -46,9 +67,13 @@ export default function App() {
             : "devin CLI를 찾을 수 없음"}
         </span>
         {info?.path && !info.authenticated && (
-          <button className="small primary" disabled={loggingIn}
-            onClick={() => { setLoggingIn(true); api.devinLogin().catch(() => setLoggingIn(false)); }}>
-            {loggingIn ? "브라우저 로그인 대기중…" : "로그인"}
+          <button className="small primary" disabled={loggingIn} onClick={startLogin}>
+            {loggingIn ? "로그인 진행중…" : "로그인"}
+          </button>
+        )}
+        {loginUrl && (
+          <button className="small" onClick={() => api.urlOpen(loginUrl)}>
+            브라우저로 열기 ↗
           </button>
         )}
         <div className="tabs">

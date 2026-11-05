@@ -55,6 +55,7 @@ fn main() {
             devin_cli::devin_info,
             devin_cli::devin_auth_status,
             devin_cli::devin_login,
+            devin_cli::url_open,
             devin_cli::devin_models,
             devin_cli::devin_print_once,
             // acp
