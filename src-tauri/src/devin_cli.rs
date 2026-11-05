@@ -144,6 +144,7 @@ pub async fn devin_login(
             cols: Some(120),
             rows: Some(30),
             env: None,
+            respond_to_queries: Some(true),
         },
     )
     .map_err(|e| e.to_string())?;

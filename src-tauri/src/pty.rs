@@ -24,6 +24,9 @@ pub struct PtySpawnOpts {
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub env: Option<std::collections::HashMap<String, String>>,
+    /// When true, the reader auto-answers terminal queries (DSR `\x1b[6n` etc.)
+    /// — needed for headless TUI subprocesses with no real terminal attached.
+    pub respond_to_queries: Option<bool>,
 }
 
 impl PtySession {
@@ -64,16 +67,40 @@ impl PtySession {
             pair_master: Arc::new(Mutex::new(pair.master)),
         });
 
-        // reader thread → base64 chunks to frontend
+        // reader thread → base64 chunks to frontend (+ optional query answers)
         {
             let app = app.clone();
             let id = id.clone();
+            let auto = opts.respond_to_queries.unwrap_or(false);
+            let session2 = session.clone();
             std::thread::spawn(move || {
                 let mut buf = [0u8; 8192];
+                let mut tail: Vec<u8> = Vec::new();
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
+                            if auto {
+                                let mut scan = tail.clone();
+                                scan.extend_from_slice(&buf[..n]);
+                                const QUERIES: &[(&[u8], &[u8])] = &[
+                                    (b"\x1b[6n", b"\x1b[1;1R"),
+                                    (b"\x1b[5n", b"\x1b[0n"),
+                                    (b"\x1b[0c", b"\x1b[?1;2c"),
+                                    (b"\x1b[c", b"\x1b[?1;2c"),
+                                ];
+                                for (pat, resp) in QUERIES {
+                                    while let Some(pos) =
+                                        scan.windows(pat.len()).position(|w| w == *pat)
+                                    {
+                                        let _ = session2.write(resp);
+                                        for b in &mut scan[pos..pos + pat.len()] {
+                                            *b = b' ';
+                                        }
+                                    }
+                                }
+                                tail = scan[scan.len().saturating_sub(8)..].to_vec();
+                            }
                             let _ = app.emit(
                                 &format!("pty://out/{id}"),
                                 json!({ "data": base64_encode(&buf[..n]) }),
