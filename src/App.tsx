@@ -61,12 +61,12 @@ export default function App() {
     <>
       <div className="topbar">
         <span className="logo"><span className="logo-mark">😈</span> Devil of Devin</span>
-        <span className={`devin-status ${info?.authenticated ? "ok" : ""}`}>
+        <span className={`devin-status ${(info?.authenticated || info?.session_token) ? "ok" : ""}`}>
           {info?.path
-            ? `devin ${info.version ?? ""} · ${info.authenticated ? "인증됨" : "미인증"}`
+            ? `devin ${info.version ?? ""} · ${info.authenticated ? "CLI认证" : info.session_token ? "ACP令牌可用" : "미인증"}`
             : "devin CLI를 찾을 수 없음"}
         </span>
-        {info?.path && !info.authenticated && (
+        {info?.path && !info.authenticated && !info.session_token && (
           <button className="small primary" disabled={loggingIn} onClick={startLogin}>
             {loggingIn ? "로그인 진행중…" : "로그인"}
           </button>

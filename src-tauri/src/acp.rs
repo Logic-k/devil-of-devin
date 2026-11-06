@@ -25,6 +25,8 @@ pub struct AcpAgent {
     /// When true, permission requests are auto-answered with the most permissive
     /// `allow_*` option instead of being forwarded to the UI.
     pub auto_approve: std::sync::atomic::AtomicBool,
+    /// Set once `authenticate` succeeded (token or browser) for this process.
+    pub authed: std::sync::atomic::AtomicBool,
     pub app: AppHandle,
 }
 
@@ -83,6 +85,7 @@ impl AcpAgent {
             sessions: Mutex::new(HashSet::new()),
             init: Mutex::new(None),
             auto_approve: std::sync::atomic::AtomicBool::new(opts.auto_approve),
+            authed: std::sync::atomic::AtomicBool::new(false),
             app: app.clone(),
         });
 
@@ -124,6 +127,18 @@ impl AcpAgent {
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
         *agent.init.lock() = Some(init);
+
+        // proactive auth via stored session token (never opens a browser here;
+        // the interactive fallback stays in session_new_authed)
+        if let Some(k) = read_session_api_key() {
+            if authenticate_apikey(&agent, &k).await.is_ok() {
+                agent.authed.store(true, Ordering::SeqCst);
+                let _ = agent.app.emit(
+                    &format!("acp://log/{}", agent.id),
+                    json!({ "line": "acp authed via session token" }),
+                );
+            }
+        }
 
         Ok(agent)
     }
@@ -320,8 +335,9 @@ impl AcpAgent {
         Ok(r)
     }
 
-    /// session/new, and if it fails with an auth error, authenticate once then retry.
-    /// `trigger_auth` controls whether the browser flow may be launched.
+    /// session/new, and if it fails with an auth error, authenticate (session
+    /// token first, browser fallback) then retry.
+    /// `trigger_auth` controls whether any auth flow may be launched.
     pub async fn session_new_authed(
         &self,
         cwd: &str,
@@ -331,7 +347,7 @@ impl AcpAgent {
         match self.session_new_mcp(cwd, mcp_servers.clone()).await {
             Ok(v) => Ok(v),
             Err(e) if trigger_auth && Self::is_auth_error(&e) => {
-                self.authenticate().await?;
+                ensure_authed(self).await?;
                 self.session_new_mcp(cwd, mcp_servers).await
             }
             Err(e) => Err(e),
@@ -363,6 +379,59 @@ impl AcpAgent {
     pub async fn kill(&self) {
         let _ = self.child.lock().await.kill().await;
     }
+}
+
+/// Read the IDE-shared session token (`windsurf_api_key` in credentials.toml).
+/// ACP accepts it via `authenticate._meta.api_key` — no browser needed.
+pub fn read_session_api_key() -> Option<String> {
+    let p = dirs::config_dir()?.join(r"devin\credentials.toml");
+    let t = std::fs::read_to_string(p).ok()?;
+    for line in t.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == "windsurf_api_key" {
+                let v = v.trim().trim_matches('"').trim_matches('\'');
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Authenticate via `_meta.api_key` (session token — no browser popup).
+pub async fn authenticate_apikey(agent: &AcpAgent, key: &str) -> Result<Value, String> {
+    agent
+        .call(
+            "authenticate",
+            json!({ "methodId": "devin-browser", "_meta": { "api_key": key } }),
+        )
+        .await
+}
+
+/// Best-effort ACP auth: session token first, browser PKCE as fallback.
+/// Call right after `initialize` (or lazily on the first auth error).
+pub async fn ensure_authed(agent: &AcpAgent) -> Result<(), String> {
+    if agent.authed.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if let Some(k) = read_session_api_key() {
+        match authenticate_apikey(agent, &k).await {
+            Ok(_) => {
+                agent.authed.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            Err(e) => {
+                let _ = agent.app.emit(
+                    &format!("acp://log/{}", agent.id),
+                    json!({ "line": format!("api_key auth failed: {e}") }),
+                );
+            }
+        }
+    }
+    agent.authenticate().await?;
+    agent.authed.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 fn get_agent(state: &crate::state::AppState, id: &str) -> Result<Arc<AcpAgent>, String> {

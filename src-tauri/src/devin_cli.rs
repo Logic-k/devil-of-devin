@@ -36,6 +36,8 @@ pub struct DevinInfo {
     pub version: Option<String>,
     pub authenticated: bool,
     pub auth_detail: String,
+    /// credentials.toml has a usable session token for ACP meta.api_key auth.
+    pub session_token: bool,
 }
 
 async fn run_capture(mut cmd: Command) -> (bool, String, String) {
@@ -64,6 +66,7 @@ pub async fn devin_info(state: tauri::State<'_, crate::state::AppState>) -> Resu
         version: None,
         authenticated: false,
         auth_detail: String::new(),
+        session_token: crate::acp::read_session_api_key().is_some(),
     };
     if let Some(p) = &path {
         let (ok, out, err) = run_capture({
