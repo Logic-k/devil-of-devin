@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Devil of Devin — 점검 보고서</title>
+<style>
+  :root{
+    --bg:#0a0a12; --panel:#101018; --panel2:#15151f; --border:#23233a;
+    --fg:#e8e8f2; --dim:#9a9ab5; --accent:#8b5cf6; --accent2:#6d28d9;
+    --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.55}
+  header{padding:28px 40px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#12101f,#0a0a12)}
+  h1{margin:0;font-size:24px} h1 .badge-devil{font-size:22px}
+  .sub{color:var(--dim);margin-top:6px}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 40px 60px}
+  h2{font-size:16px;color:var(--accent);letter-spacing:.5px;margin:34px 0 12px;border-left:3px solid var(--accent);padding-left:10px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+  .card .k{color:var(--dim);font-size:12px;margin-bottom:4px}
+  .card .v{font-size:15px;font-weight:600}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .err{color:var(--err)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}
+  th{background:var(--panel2);color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#06281f;color:var(--ok)} .pill.warn{background:#2b2008;color:var(--warn)} .pill.err{background:#2b0e0e;color:var(--err)}
+  code{background:#1c1c2c;padding:1px 6px;border-radius:4px;font-family:'Cascadia Code',Consolas,monospace;font-size:12.5px;color:#c4b5fd}
+  pre{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto;font-size:12.5px}
+  .shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:16px}
+  .shot{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .shot img{width:100%;display:block}
+  .shot .cap{padding:8px 14px;font-size:12.5px;color:var(--dim);border-top:1px solid var(--border)}
+  .shot .cap b{color:var(--fg)}
+  ul{margin:6px 0;padding-left:20px} li{margin:4px 0}
+  .fix{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--ok);border-radius:6px;padding:12px 16px;margin:10px 0}
+  .fix .t{font-weight:600}
+  footer{color:var(--dim);font-size:12px;padding:24px 40px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="badge-devil">😈</span> Devil of Devin — 점검 보고서</h1>
+  <div class="sub">Tauri 2 + React + Rust · Devin CLI ACP 워커 오케스트레이터 · 생성: 2026-11-06</div>
+</header>
+<div class="wrap">
+
+<h2>1. 현재 상태 요약</h2>
+<div class="grid">
+  <div class="card"><div class="k">앱 프로세스</div><div class="v ok">실행 중 (PID 18460)</div></div>
+  <div class="card"><div class="k">Devin CLI</div><div class="v">3000.11.234 (92c83011d113)</div></div>
+  <div class="card"><div class="k">ACP 인증</div><div class="v ok">세션 토큰 사용 가능</div></div>
+  <div class="card"><div class="k">훅 서버</div><div class="v ok">127.0.0.1:50855 · /health ok</div></div>
+  <div class="card"><div class="k">Vite 개발서버</div><div class="v ok">localhost:1420 → 200</div></div>
+  <div class="card"><div class="k">빌드 상태</div><div class="v ok">cargo check · npm build 통과</div></div>
+</div>
+
+<h2>2. 검증 매트릭스</h2>
+<table>
+  <tr><th>항목</th><th>방법</th><th>결과</th><th>비고</th></tr>
+  <tr><td>Rust 컴파일</td><td><code>cargo check</code></td><td><span class="pill ok">통과</span></td><td>경고 없음</td></tr>
+  <tr><td>프론트엔드 빌드</td><td><code>npm run build</code></td><td><span class="pill ok">통과</span></td><td>&gt;500kB 청크 경고만 존재(비치명)</td></tr>
+  <tr><td>ACP initialize</td><td>실제 <code>devin acp</code> 서브프로세스</td><td><span class="pill ok">통과</span></td><td>protocolVersion 1</td></tr>
+  <tr><td>ACP authenticate</td><td><code>credentials.toml</code> 세션 토큰 → <code>_meta.api_key</code></td><td><span class="pill ok">통과</span></td><td>브라우저 로그인 불필요</td></tr>
+  <tr><td>session/new</td><td>인증 후 세션 생성</td><td><span class="pill ok">통과</span></td><td><code>circular-scarecrow</code>, <code>wind-colt</code> 등</td></tr>
+  <tr><td>session/prompt 스트리밍</td><td>"PONG" 프롬프트 실전 전송</td><td><span class="pill ok">통과</span></td><td><code>agent_thought_chunk</code> → <code>agent_message_chunk</code> → <code>end_turn</code> 확인</td></tr>
+  <tr><td>훅 서버</td><td><code>GET /health</code>, <code>POST /hook</code></td><td><span class="pill ok">통과</span></td><td>localhost 바인드만 사용</td></tr>
+  <tr><td>훅 명령 실행</td><td>실제 세션에서 UserPromptSubmit 발화</td><td><span class="pill ok">통과</span></td><td>bash 안전 문법으로 수정 후 프롬프트 차단 해소</td></tr>
+  <tr><td>UI 렌더링</td><td>실제 Tauri 창 캡처 + headless 탭 전환</td><td><span class="pill ok">통과</span></td><td>7개 탭 전부 정상 표시</td></tr>
+  <tr><td>한국어 UI</td><td>전 화면 문자열 검토</td><td><span class="pill ok">통과</span></td><td>잔존 중국어 문자열 제거 완료</td></tr>
+</table>
+
+<h2>3. 이번 세션 주요 수정 내역</h2>
+<div class="fix"><div class="t">✔ 프롬프트 차단 버그 (핵심)</div>
+  주입된 훅 명령이 cmd 문법(<code>&gt;nul</code>, <code>exit /b 0</code>)이었는데 Devin 훅은 <b>Git Bash</b>로 실행됨.
+  <code>UserPromptSubmit</code> 훅 실패가 모든 프롬프트를 차단(<code>Prompt blocked: exit: /b: numeric argument required</code>).
+  <code>|| true</code> 종료의 bash 명령으로 교체하고, 기존 파일의 깨진 엔트리 8개도 복구. 재주입 시 구 <code>_devil</code> 엔트리 정리.</div>
+<div class="fix"><div class="t">✔ ACP 인증 경로 확정</div>
+  <code>devin auth status</code>가 "Not logged in"이라도 <code>credentials.toml</code>의 <code>devin-session-token</code>은 유효.
+  토큰을 ACP <code>authenticate</code>로 직접 전달 → 세션 생성·프롬프트 전부 성공. 상단 배지 "ACP 토큰 사용 가능"으로 표시.</div>
+<div class="fix"><div class="t">✔ 로그인 TUI 자동화</div>
+  <code>devin auth login</code>은 대화형 TUI — ConPTY로 실행하고 커서위치 쿼리(<code>ESC[6n</code>)에 자동 응답, Enter로 브라우저 로그인 선택.
+  로그인 URL 감지 시 "브라우저로 열기" 버튼 표시.</div>
+<div class="fix"><div class="t">✔ 정리</div>
+  훅 실패 부산물 <code>nul</code> 파일(Windows 예약명) 삭제, <code>.devin/hooks.v1.json</code> gitignore 등록(포트가 박힌 자동생성 파일).</div>
+
+<h2>4. 스크린샷</h2>
+<div class="shots">
+  <div class="shot"><img src="shots/app-window.png"><div class="cap"><b>실제 Tauri 창</b> — 리서치 탭. 상단에 <code>devin 3000.11.234 · ACP 토큰 사용 가능</code> 배지 확인.</div></div>
+  <div class="shot"><img src="shots/01-workers.png"><div class="cap"><b>워커</b> — 새 워커 생성 폼(이름/cwd/모델/역할/자동승인), 기존 세션 불러오기. (headless라 IPC 없음 → "devin CLI를 찾을 수 없음" 표시는 예상 동작)</div></div>
+  <div class="shot"><img src="shots/02-research.png"><div class="cap"><b>리서치</b> — 주제·리서처 수·질문 수·검토/보강 라운드 설정 + 진행 상황 패널.</div></div>
+  <div class="shot"><img src="shots/03-develop.png"><div class="cap"><b>개발</b> — 목표·검증 명령·최대 사이클, 리서치 md 소비 파이프라인.</div></div>
+  <div class="shot"><img src="shots/04-tasks.png"><div class="cap"><b>태스크</b> — 실행 중인 리서치/개발 파이프라인 추적.</div></div>
+  <div class="shot"><img src="shots/05-skills.png"><div class="cap"><b>스킬</b> — 로컬 스킬 스캔/활성 토글/미리보기 + GitHub 검색·설치.</div></div>
+  <div class="shot"><img src="shots/06-terminal.png"><div class="cap"><b>터미널</b> — ConPTY 임베디드 devin CLI (로그인 세션 연결 지원).</div></div>
+  <div class="shot"><img src="shots/07-settings.png"><div class="cap"><b>설정</b> — 경로·모델·권한모드·훅 포트·스킬 디렉터리·MCP 서버·워커 env.</div></div>
+</div>
+
+<h2>5. 사용 흐름</h2>
+<pre>워커 탭 → 워커 생성 (devin acp 자동 인증) → 왼쪽 목록에서 선택 → 하단 입력 → 전송
+응답은 오른쪽 채팅 영역에 스트리밍 (생각·메시지·툴콜·플랜 구분 표시)
+리서치 탭 → 원클릭 파이프라인: plan → 병렬 sweep → review×N → refine×N → synth → research/*.md
+개발 탭 → research/*.md 소비 → .devil/plan.md → 구현↔리뷰 사이클 → 완료 알림</pre>
+
+<h2>6. 알려진 제한사항</h2>
+<ul>
+  <li><span class="pill warn">참고</span> plain 브라우저(IPC 없음)에서는 상단이 "devin CLI를 찾을 수 없음"으로 표시 — 정상 fallback. 실제 데이터는 Tauri 창에서 확인.</li>
+  <li><span class="pill warn">참고</span> 훅 서버 포트는 실행마다 랜덤 — 이전 실행에서 주입된 훅 엔트리는 조용히 실패(<code>|| true</code>)하며, 재주입 시 자동 정리됨.</li>
+  <li><span class="pill warn">참고</span> 프론트 번들 ~547kB (Vite 경고) — 기능 문제 없음, 필요 시 코드 스플리팅.</li>
+  <li><span class="pill warn">미검증</span> 패키지 빌드(<code>tauri build</code>)의 알림 권한/아이콘 — 배포 빌드 시 확인 필요.</li>
+</ul>
+
+<h2>7. 다음 확인 권장사항</h2>
+<ul>
+  <li>워커 탭에서 실제 워커 생성 → 프롬프트 전송 → 오른쪽 트랜스크립트 스트리밍 확인</li>
+  <li>리서치 탭 원클릭 실행 → <code>&lt;대상&gt;\research\*.md</code> 산출물 확인</li>
+  <li>권한 요청 발생 시 모달에서 allow/deny 선택 동작 확인</li>
+</ul>
+
+</div>
+<footer>Devil of Devin · D:\Devil_of_Devin · 이 보고서는 <code>report/report.html</code>에 저장됨 · 스크린샷은 <code>report/shots/</code></footer>
+</body>
+</html>
