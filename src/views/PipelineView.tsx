@@ -3,6 +3,13 @@ import { api } from "../lib/ipc";
 import { useStore } from "../store";
 import { promptCoordinator } from "../lib/coordinator";
 import { ModelInput } from "../components/fields";
+import StartGuide from "../components/StartGuide";
+
+/** 리서치 결과가 자동 참조되는 단계 */
+const RESEARCH_STAGES = ["idea", "trd"];
+const RESEARCH_REF =
+  "\n\n참고: 이 프로젝트에는 research/INDEX.md 에 정리된 리서치 결과가 있다. 먼저 INDEX.md 와 그 안의 종합 보고서를 읽고 근거로 삼아줘. " +
+  "출처가 있는 주장을 우선하고, 리서치 결론과 다른 결정을 내릴 때는 그 이유를 문서에 적어줘.";
 
 const STAGE_HELP: Record<string, { desc: string; prompt: string; needsInput?: boolean }> = {
   idea: {
@@ -53,11 +60,14 @@ export default function PipelineView() {
   const [git, setGit] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
+  const [researchIndex, setResearchIndex] = useState<string | null>(null);
+  const [useResearch, setUseResearch] = useState(true);
 
   const refresh = async () => {
     if (!project) return;
     try { setStages(await api.projectStages(project.path)); } catch {}
     try { setGit(await api.projectGitInfo(project.path)); } catch {}
+    try { setResearchIndex(await api.projectFileRead(project.path, "research/INDEX.md")); } catch { setResearchIndex(null); }
   };
   useEffect(() => {
     refresh();
@@ -81,7 +91,8 @@ export default function PipelineView() {
     if (help.needsInput && !input.trim()) { notify("아이디어 설명을 입력하세요", "err"); return; }
     setBusy(true);
     try {
-      const text = help.prompt.replace("{input}", input.trim()).trim();
+      let text = help.prompt.replace("{input}", input.trim()).trim();
+      if (researchIndex && useResearch && RESEARCH_STAGES.includes(sel)) text += RESEARCH_REF;
       await promptCoordinator(project.path, text);
       setInput("");
     } catch (e) {
@@ -117,6 +128,13 @@ export default function PipelineView() {
         </div>
       )}
 
+      <StartGuide
+        doneCount={doneCount}
+        hasResearch={!!researchIndex}
+        onResearch={() => setResearchOpen(true)}
+        onStage={(id) => setSel(id)}
+      />
+
       <div className="stepper">
         {stages.map((s, i) => (
           <button key={s.id} className={`step ${s.status} ${sel === s.id ? "selected" : ""}`} onClick={() => setSel(s.id)}>
@@ -143,6 +161,7 @@ export default function PipelineView() {
             <div key={r.id} className="row small">
               <span className={`badge ${r.done ? (r.error ? "err" : "ok") : "run"}`}>{r.phase}</span>
               <span>리서치: {r.spec.topic}</span>
+              {r.done && !r.error && researchIndex && <span className="badge ok" title="IDEA·TRD 단계 프롬프트에 research/INDEX.md 참조가 자동으로 붙습니다">IDEA·TRD에 자동 참조</span>}
               {r.artifacts?.map((a: string) => <button key={a} className="tiny" onClick={() => openDoc(a)}>{a}</button>)}
             </div>
           ))}
@@ -172,6 +191,20 @@ export default function PipelineView() {
             </p>
             <textarea rows={help?.needsInput ? 5 : 3} value={input} onChange={(e) => setInput(e.target.value)}
               placeholder={help?.needsInput ? "만들고 싶은 것을 설명하세요. 예: 개인용 독서 기록 웹앱 — 책 추가·메모·별점, 새로고침해도 유지" : "추가 지시 (선택)"} />
+            {RESEARCH_STAGES.includes(sel) && (
+              researchIndex ? (
+                <label className="row small" style={{ marginTop: 6, gap: 6, cursor: "pointer" }}>
+                  <input type="checkbox" checked={useResearch} onChange={(e) => setUseResearch(e.target.checked)} />
+                  <span>리서치 결과 참조 (<code>research/INDEX.md</code>를 먼저 읽고 근거로 삼도록 지시)</span>
+                  <button className="tiny" type="button" onClick={(e) => { e.preventDefault(); openDoc("research/INDEX.md"); }}>보기</button>
+                </label>
+              ) : (
+                <div className="small dim" style={{ marginTop: 6 }}>
+                  💡 이 단계 전에 <button className="tiny" onClick={() => setResearchOpen(true)}>리서치</button>를 돌리면 결과를 자동으로 참조합니다
+                  ({sel === "idea" ? "문제·기존 해법·사용자 불편" : "기술 선택지 비교"}).
+                </div>
+              )
+            )}
             <div className="row" style={{ marginTop: 8 }}>
               <button className="primary" disabled={busy || (harness && !harness.complete)} onClick={run}>
                 {busy ? "전송 중…" : `/${stage.skill} 실행`}
