@@ -58,6 +58,7 @@ fn main() {
             devin_cli::url_open,
             devin_cli::devin_models,
             devin_cli::devin_print_once,
+            devin_cli::pick_folder,
             // acp
             acp::acp_spawn,
             acp::acp_call,
@@ -79,6 +80,7 @@ fn main() {
             workers::worker_prompt,
             workers::worker_list,
             workers::worker_stop,
+            workers::worker_delete,
             // research pipeline
             research::research_start,
             research::research_status,

@@ -143,8 +143,19 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .plan-items li { padding: 3px 0; font-size: 13px; color: var(--fg-dim); }
 .plan-items li.completed, .plan-items li.done { color: var(--ok); }
 .plan-items li.in_progress { color: var(--accent2); }
-.composer { display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border-soft); background: var(--bg2); }
-.composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 140px; }
+.composer {
+  display: flex; gap: 10px; padding: 16px 20px;
+  border-top: 1px solid var(--border-soft); background: var(--bg2);
+}
+.composer textarea {
+  flex: 1; resize: vertical; min-height: 96px; max-height: 320px;
+  line-height: 1.55; font-family: inherit;
+}
+.composer .send-col { display: flex; flex-direction: column; gap: 8px; min-width: 88px; }
+.composer .send-col .primary { flex: 1; }
+.dir-input { display: flex; gap: 6px; align-items: stretch; }
+.dir-input input { flex: 1; min-width: 0; }
+.dir-input .icon { padding: 0 10px; font-size: 14px; flex-shrink: 0; }
 
 /* ── permission modal ────────────────────── */
 .perm-overlay {

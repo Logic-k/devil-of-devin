@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ev } from "../lib/ipc";
+import { DirInput, ModelInput } from "../components/fields";
 
 export default function ResearchTab({ defaultModel }: { defaultModel?: string }) {
   const [spec, setSpec] = useState({
@@ -61,8 +62,8 @@ export default function ResearchTab({ defaultModel }: { defaultModel?: string })
                 onChange={(e) => setSpec({ ...spec, topic: e.target.value })} />
             </label>
             <label className="field">대상 프로젝트 디렉터리
-              <input value={spec.targetDir}
-                onChange={(e) => setSpec({ ...spec, targetDir: e.target.value })} />
+              <DirInput value={spec.targetDir}
+                onChange={(v) => setSpec({ ...spec, targetDir: v })} />
             </label>
             <div className="row">
               {num("researchers", "리서처 수")}
@@ -72,8 +73,8 @@ export default function ResearchTab({ defaultModel }: { defaultModel?: string })
             </div>
             <div className="row">
               <label className="field">모델
-                <input value={spec.model} placeholder={defaultModel ?? "swe-2-max"}
-                  onChange={(e) => setSpec({ ...spec, model: e.target.value })} />
+                <ModelInput value={spec.model} placeholder={defaultModel ?? "swe-2-max"}
+                  onChange={(v) => setSpec({ ...spec, model: v })} />
               </label>
               <label className="row small dim" style={{ alignSelf: "end" }}>
                 <input type="checkbox" checked={spec.autoApprove}

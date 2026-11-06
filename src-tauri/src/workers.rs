@@ -150,6 +150,32 @@ pub async fn worker_stop(state: State<'_, AppState>, worker_id: String) -> Resul
     Ok(())
 }
 
+/// Delete a worker entirely: close/delete its devin session, kill the
+/// agent process, drop the entry from the worker list.
+#[tauri::command]
+pub async fn worker_delete(
+    state: State<'_, AppState>,
+    worker_id: String,
+) -> Result<(), String> {
+    let (agent_id, session_id) = {
+        let mut g = state.workers.lock();
+        match g.remove(&worker_id) {
+            Some(w) => (w.agent_id, w.session_id),
+            None => return Ok(()),
+        }
+    };
+    let removed = state.acp.lock().remove(&agent_id);
+    if let Some(a) = removed {
+        if !session_id.is_empty() {
+            let _ = a
+                .call("session/delete", json!({ "sessionId": session_id }))
+                .await;
+        }
+        a.kill().await;
+    }
+    Ok(())
+}
+
 /// Spawn a temporary ACP worker, run one prompt to completion, kill it.
 /// Used by the research pipeline — returns final Value (stopReason).
 pub async fn run_oneshot_worker(

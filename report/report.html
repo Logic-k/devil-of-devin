@@ -78,6 +78,12 @@
   주입된 훅 명령이 cmd 문법(<code>&gt;nul</code>, <code>exit /b 0</code>)이었는데 Devin 훅은 <b>Git Bash</b>로 실행됨.
   <code>UserPromptSubmit</code> 훅 실패가 모든 프롬프트를 차단(<code>Prompt blocked: exit: /b: numeric argument required</code>).
   <code>|| true</code> 종료의 bash 명령으로 교체하고, 기존 파일의 깨진 엔트리 8개도 복구. 재주입 시 구 <code>_devil</code> 엔트리 정리.</div>
+<div class="fix"><div class="t">✔ 이벤트 권한 누락 — 응답이 전혀 안 뜨던 근본 원인</div>
+  <code>capabilities/default.json</code>이 없어 <code>core:event:allow-listen</code>이 거부됨 →
+  <code>listen()</code> 실패로 <code>acp://update</code>(에이전트 스트리밍), <code>pty://out</code>, 진행률, 훅 이벤트 전부 차단.
+  capability 파일 추가 후 <b>실제 웹뷰에서 CDP로 엔드투엔드 검증</b>: LISTEN OK → worker_create → PONG 스트리밍 → end_turn.</div>
+<div class="fix"><div class="t">✔ 사용자 메시지 미표시</div>
+  Devin이 <code>user_message_chunk</code> 에코를 보내지 않음 → 전송 즉시 낙관적 표시 + "실행 중…" 표시 + 빈 상태 안내 추가.</div>
 <div class="fix"><div class="t">✔ ACP 인증 경로 확정</div>
   <code>devin auth status</code>가 "Not logged in"이라도 <code>credentials.toml</code>의 <code>devin-session-token</code>은 유효.
   토큰을 ACP <code>authenticate</code>로 직접 전달 → 세션 생성·프롬프트 전부 성공. 상단 배지 "ACP 토큰 사용 가능"으로 표시.</div>

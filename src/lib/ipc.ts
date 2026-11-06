@@ -32,6 +32,9 @@ export const api = {
     invoke<any>("worker_prompt", { workerId, text }),
   workerList: () => invoke<any[]>("worker_list"),
   workerStop: (workerId: string) => invoke<void>("worker_stop", { workerId }),
+  workerDelete: (workerId: string) => invoke<void>("worker_delete", { workerId }),
+  pickFolder: (defaultDir?: string) =>
+    invoke<string | null>("pick_folder", { default: defaultDir ?? null }),
 
   researchStart: (spec: any) => invoke<string>("research_start", { spec }),
   researchStatus: (id: string) => invoke<any>("research_status", { id }),

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ev } from "../lib/ipc";
+import { DirInput, ModelInput } from "../components/fields";
 
 export default function DevelopTab({ defaultModel }: { defaultModel?: string }) {
   const [spec, setSpec] = useState({
@@ -44,8 +45,8 @@ export default function DevelopTab({ defaultModel }: { defaultModel?: string }) 
           <h3>개발 파이프라인 (원클릭)</h3>
           <div className="col">
             <label className="field">대상 프로젝트 디렉터리
-              <input value={spec.targetDir}
-                onChange={(e) => setSpec({ ...spec, targetDir: e.target.value })} />
+              <DirInput value={spec.targetDir}
+                onChange={(v) => setSpec({ ...spec, targetDir: v })} />
             </label>
             <label className="field">목표 (비우면 research/에서 추론)
               <textarea value={spec.goal} rows={3}
@@ -64,8 +65,8 @@ export default function DevelopTab({ defaultModel }: { defaultModel?: string }) 
             </div>
             <div className="row">
               <label className="field">모델
-                <input value={spec.model} placeholder={defaultModel ?? "swe-2-max"}
-                  onChange={(e) => setSpec({ ...spec, model: e.target.value })} />
+                <ModelInput value={spec.model} placeholder={defaultModel ?? "swe-2-max"}
+                  onChange={(v) => setSpec({ ...spec, model: v })} />
               </label>
               <label className="row small dim" style={{ alignSelf: "end" }}>
                 <input type="checkbox" checked={spec.autoApprove}

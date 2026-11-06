@@ -25,6 +25,7 @@ axum = { version = "0.8", features = ["json"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 keyring = { version = "3", features = ["windows-native"] }
 parking_lot = "0.12"
+rfd = "0.15"
 
 [profile.dev]
 incremental = true

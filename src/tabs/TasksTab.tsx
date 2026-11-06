@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/ipc";
+import { DirInput, ModelInput } from "../components/fields";
 
 interface Task {
   id: string; title: string; prompt: string;
@@ -63,9 +64,9 @@ export default function TasksTab() {
       <div className="card">
         <h3>태스크 보드 — 프로젝트 <code>{dir}</code></h3>
         <div className="row">
-          <input style={{ width: 340 }} value={dir} onChange={(e) => setDir(e.target.value)} />
-          <input style={{ width: 160 }} placeholder="모델(기본 swe-2-max)" value={model}
-            onChange={(e) => setModel(e.target.value)} />
+          <DirInput style={{ width: 380 }} value={dir} onChange={setDir} />
+          <ModelInput style={{ width: 180 }} placeholder="모델(기본 swe-2-max)" value={model}
+            onChange={setModel} />
           <label className="row small dim">
             <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} />
             자동승인

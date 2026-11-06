@@ -186,6 +186,19 @@ pub fn url_open(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Native folder picker — runs fully on the Rust side, so no
+/// dialog-plugin capability is required.
+#[tauri::command]
+pub fn pick_folder(default: Option<String>) -> Option<String> {
+    let mut d = rfd::FileDialog::new();
+    if let Some(dir) = default {
+        if std::path::Path::new(&dir).exists() {
+            d = d.set_directory(&dir);
+        }
+    }
+    d.pick_folder().map(|p| p.to_string_lossy().to_string())
+}
+
 /// One-shot `devin -p` (non-interactive print) — used by quick query/review passes.
 #[tauri::command]
 pub async fn devin_print_once(

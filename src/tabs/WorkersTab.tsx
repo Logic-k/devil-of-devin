@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ev } from "../lib/ipc";
+import { DirInput, ModelInput } from "../components/fields";
 
 interface Msg {
   kind: "user" | "agent" | "thought" | "tool" | "plan" | "notice" | "system";
@@ -208,10 +209,10 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
           <div className="col">
             <input placeholder="이름 (선택)" value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <input placeholder="작업 디렉터리" value={form.cwd}
-              onChange={(e) => setForm({ ...form, cwd: e.target.value })} />
-            <input placeholder="모델 (비우면 기본값: swe-2-max)" value={form.model}
-              onChange={(e) => setForm({ ...form, model: e.target.value })} />
+            <DirInput placeholder="작업 디렉터리" value={form.cwd}
+              onChange={(v) => setForm({ ...form, cwd: v })} />
+            <ModelInput placeholder="모델 (비우면 기본값: swe-2-max)" value={form.model}
+              onChange={(v) => setForm({ ...form, model: v })} />
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               <option value="general">general (기본 에이전트)</option>
               <option value="planner">planner (계획 레인)</option>
@@ -241,6 +242,14 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
                 onClick={(e) => { e.stopPropagation(); api.workerStop(w.id).then(refresh); }}>
                 종료
               </button>
+              <button className="danger small" title="워커 및 세션 삭제"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`워커 ${w.name}을(를) 삭제할까요? (세션도 삭제됩니다)`))
+                    api.workerDelete(w.id).then(refresh);
+                }}>
+                삭제
+              </button>
             </div>
             <div className="meta">{w.model} · {w.role}</div>
             <div className="meta">{w.cwd}</div>
@@ -269,8 +278,8 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
         <div className="card" style={{ marginTop: 12 }}>
           <h3>기존 세션 불러오기</h3>
           <div className="col">
-            <input placeholder="작업 디렉터리" value={loadCwd}
-              onChange={(e) => setLoadCwd(e.target.value)} />
+            <DirInput placeholder="작업 디렉터리" value={loadCwd}
+              onChange={setLoadCwd} />
             <div className="row">
               <input className="grow" placeholder="세션 ID" value={loadSid}
                 onChange={(e) => setLoadSid(e.target.value)} />
@@ -343,10 +352,12 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
               <textarea value={draft} placeholder="프롬프트 입력… (Ctrl+Enter 전송)"
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) send(); }} />
-              <button className="primary" onClick={send} disabled={busy || !draft.trim()}>
-                {busy ? "실행중…" : "전송"}
-              </button>
-              <button onClick={() => activeSession && api.acpCancel(activeAgent, activeSession)}>취소</button>
+              <div className="send-col">
+                <button className="primary" onClick={send} disabled={busy || !draft.trim()}>
+                  {busy ? "실행중…" : "전송"}
+                </button>
+                <button onClick={() => activeSession && api.acpCancel(activeAgent, activeSession)}>취소</button>
+              </div>
             </div>
           </>
         ) : (
