@@ -46,6 +46,11 @@ interface Store {
   loginState: { busy: boolean; url: string | null };
   toast: { id: number; text: string; kind: "ok" | "err" | "info" } | null;
   update: UpdateState | null;
+  /** Devin 호환성 자가 점검 결과 (compat.rs) */
+  compat: any | null;
+  compatRunning: boolean;
+  /** 토큰 인증 실패 → 브라우저 로그인 폴백 알림 */
+  authFallback: { stage: string; message: string; at: number; agentId: string } | null;
 
   set: (p: Partial<Store>) => void;
   setView: (v: View) => void;
@@ -88,6 +93,9 @@ export const useStore = create<Store>((set, get) => ({
   loginState: { busy: false, url: null },
   toast: null,
   update: null,
+  compat: null,
+  compatRunning: false,
+  authFallback: null,
 
   set: (p) => set(p),
   setView: (view) => set({ view }),

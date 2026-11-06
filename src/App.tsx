@@ -28,6 +28,8 @@ export default function App() {
   const perms = useStore((s) => s.perms);
   const toast = useStore((s) => s.toast);
   const loginState = useStore((s) => s.loginState);
+  const compat = useStore((s) => s.compat);
+  const authFallback = useStore((s) => s.authFallback);
   const set = useStore((s) => s.set);
   const pendingPerms = perms.length;
 
@@ -76,6 +78,17 @@ export default function App() {
                 ? `${String(info.version ?? "").replace(/^devin\s+/, "devin ").split(" (")[0]} · ${info.authenticated ? "CLI 인증" : info.session_token ? "ACP 토큰" : "미인증"}`
                 : "devin CLI 없음"}
             </span>
+            {info?.path && info.version_status && info.version_status !== "tested" && info.version_status !== "unknown" && (
+              <button className="badge warn clickable" onClick={() => set({ view: "settings" })}
+                title={`설치된 Devin(${String(info.version ?? "").split(" (")[0]})은 이 앱이 검증한 버전(${info.tested_version})과 다릅니다. 설정 → Devin 호환성에서 점검 결과를 확인하세요.`}>
+                Devin {info.version_status === "newer" ? "신버전" : "구버전"} 미검증
+              </button>
+            )}
+            {compat && !compat.ok && (
+              <button className="badge err clickable" onClick={() => set({ view: "settings" })} title="Devin 호환성 자가 점검에서 핵심 항목이 실패했습니다">
+                호환성 문제 {compat.failures}
+              </button>
+            )}
             {info?.path && !authed && (
               <button className="small primary" disabled={loginState.busy} onClick={startLogin}>
                 {loginState.busy ? "로그인 진행중…" : "로그인"}
@@ -91,6 +104,17 @@ export default function App() {
           </div>
         </div>
         <UpdateBanner />
+        {authFallback && (
+          <div className={`banner ${authFallback.stage === "failed" ? "err" : "warn"}`} style={{ borderRadius: 0, borderLeft: 0, borderRight: 0 }}>
+            <span>🔐 {authFallback.message}</span>
+            <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+              {authFallback.stage === "failed" && (
+                <button className="small primary" disabled={loginState.busy} onClick={startLogin}>{loginState.busy ? "로그인 진행중…" : "로그인 (devin auth login)"}</button>
+              )}
+              <button className="small" onClick={() => set({ authFallback: null })}>닫기</button>
+            </span>
+          </div>
+        )}
         <div className="body">
           <div className="main">
             {view === "pipeline" && <PipelineView />}

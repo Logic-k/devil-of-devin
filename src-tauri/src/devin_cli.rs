@@ -4,6 +4,36 @@ use std::process::Stdio;
 use tauri::Manager;
 use tokio::process::Command;
 
+/// Devin CLI version this app was verified against (ACP handshake, `_meta.api_key`
+/// auth, `--agent-type review`, session modes, slash-skill invocation).
+pub const TESTED_DEVIN_VERSION: &str = "3000.11.234";
+
+/// Pull the first dotted number out of a `devin version` string.
+pub fn version_number(s: &str) -> Option<Vec<u64>> {
+    for tok in s.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',') {
+        let t = tok.trim_start_matches('v');
+        if t.contains('.') && t.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            let parts: Vec<u64> = t.split('.').filter_map(|p| p.parse().ok()).collect();
+            if parts.len() >= 2 {
+                return Some(parts);
+            }
+        }
+    }
+    None
+}
+
+/// "tested" | "newer" | "older" | "unknown" relative to TESTED_DEVIN_VERSION.
+pub fn version_status(installed: Option<&str>) -> String {
+    let Some(inst) = installed.and_then(version_number) else { return "unknown".into() };
+    let tested = version_number(TESTED_DEVIN_VERSION).unwrap_or_default();
+    match inst.cmp(&tested) {
+        std::cmp::Ordering::Equal => "tested",
+        std::cmp::Ordering::Greater => "newer",
+        std::cmp::Ordering::Less => "older",
+    }
+    .into()
+}
+
 /// Locate the devin CLI binary.
 pub fn find_devin(configured: &str) -> Option<PathBuf> {
     if !configured.is_empty() {
@@ -38,6 +68,9 @@ pub struct DevinInfo {
     pub auth_detail: String,
     /// credentials.toml has a usable session token for ACP meta.api_key auth.
     pub session_token: bool,
+    pub tested_version: String,
+    /// "tested" | "newer" | "older" | "unknown"
+    pub version_status: String,
 }
 
 async fn run_capture(mut cmd: Command) -> (bool, String, String) {
@@ -67,6 +100,8 @@ pub async fn devin_info(state: tauri::State<'_, crate::state::AppState>) -> Resu
         authenticated: false,
         auth_detail: String::new(),
         session_token: crate::acp::read_session_api_key().is_some(),
+        tested_version: TESTED_DEVIN_VERSION.into(),
+        version_status: "unknown".into(),
     };
     if let Some(p) = &path {
         let (ok, out, err) = run_capture({
@@ -76,6 +111,7 @@ pub async fn devin_info(state: tauri::State<'_, crate::state::AppState>) -> Resu
         })
         .await;
         info.version = Some(if ok { out.trim().to_string() } else { err.trim().to_string() });
+        info.version_status = version_status(info.version.as_deref());
         let (_, out, err) = run_capture({
             let mut c = Command::new(p);
             c.args(["auth", "status"]);

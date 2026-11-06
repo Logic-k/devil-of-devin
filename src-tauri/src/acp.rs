@@ -203,6 +203,14 @@ impl AcpAgent {
         Ok(agent)
     }
 
+    pub fn init_info(&self) -> Option<Value> {
+        self.init.lock().clone()
+    }
+
+    pub fn is_authed(&self) -> bool {
+        self.authed.load(Ordering::SeqCst)
+    }
+
     /// Emit both the per-agent event (`acp://{kind}/{id}`) and the global
     /// stream (`acp://event`) the frontend store subscribes to once.
     pub fn emit(&self, kind: &str, payload: Value) {
@@ -529,18 +537,45 @@ pub async fn ensure_authed(agent: &AcpAgent) -> Result<(), String> {
     if agent.authed.load(Ordering::SeqCst) {
         return Ok(());
     }
-    if let Some(k) = read_session_api_key() {
-        match authenticate_apikey(agent, &k).await {
+    let token_err = match read_session_api_key() {
+        Some(k) => match authenticate_apikey(agent, &k).await {
             Ok(_) => {
                 agent.authed.store(true, Ordering::SeqCst);
                 return Ok(());
             }
-            Err(e) => agent.emit("log", json!({ "line": format!("api_key auth failed: {e}") })),
+            Err(e) => Some(e),
+        },
+        None => None,
+    };
+    // 폴백 1: ACP 브라우저 인증 (devin-browser). 프론트에 알려 배너를 띄운다.
+    agent.emit(
+        "auth-fallback",
+        json!({
+            "stage": "browser",
+            "tokenError": token_err,
+            "message": match &token_err {
+                Some(e) => format!("세션 토큰 인증이 거부되어 브라우저 로그인으로 전환합니다 ({e})"),
+                None => "저장된 세션 토큰이 없어 브라우저 로그인으로 전환합니다".to_string(),
+            }
+        }),
+    );
+    match agent.authenticate().await {
+        Ok(_) => {
+            agent.authed.store(true, Ordering::SeqCst);
+            agent.emit("auth-fallback", json!({ "stage": "done", "message": "브라우저 인증 완료" }));
+            Ok(())
+        }
+        Err(browser_err) => {
+            // 폴백 2: 사용자가 상단 "로그인" 버튼으로 devin auth login 을 돌려야 한다.
+            let msg = format!(
+                "ACP 인증 실패 — 토큰: {}; 브라우저: {}. 상단 '로그인' 버튼으로 devin auth login 을 실행한 뒤 다시 시도하세요.",
+                token_err.unwrap_or_else(|| "없음".into()),
+                browser_err
+            );
+            agent.emit("auth-fallback", json!({ "stage": "failed", "message": msg }));
+            Err(msg)
         }
     }
-    agent.authenticate().await?;
-    agent.authed.store(true, Ordering::SeqCst);
-    Ok(())
 }
 
 pub fn get_agent(state: &crate::state::AppState, id: &str) -> Result<Arc<AcpAgent>, String> {

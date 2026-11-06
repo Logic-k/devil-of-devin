@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { promptCoordinator } from "../lib/coordinator";
 import { ModelInput } from "../components/fields";
 import StartGuide from "../components/StartGuide";
+import ResearchProgress from "../components/ResearchProgress";
 
 /** 리서치 결과가 자동 참조되는 단계 */
 const RESEARCH_STAGES = ["idea", "trd"];
@@ -161,6 +162,7 @@ export default function PipelineView() {
             <div key={r.id} className="row small">
               <span className={`badge ${r.done ? (r.error ? "err" : "ok") : "run"}`}>{r.phase}</span>
               <span>리서치: {r.spec.topic}</span>
+              {!r.done && <ResearchProgress run={r} compact />}
               {r.done && !r.error && researchIndex && <span className="badge ok" title="IDEA·TRD 단계 프롬프트에 research/INDEX.md 참조가 자동으로 붙습니다">IDEA·TRD에 자동 참조</span>}
               {r.artifacts?.map((a: string) => <button key={a} className="tiny" onClick={() => openDoc(a)}>{a}</button>)}
             </div>
@@ -252,6 +254,7 @@ function ResearchCard({ projectPath, defaultModel }: { projectPath: string; defa
         <label className="field">모델<ModelInput value={spec.model} placeholder={defaultModel ?? "swe-2-max"} onChange={(v) => setSpec({ ...spec, model: v })} style={{ width: 160 }} /></label>
         <button className="primary" disabled={!spec.topic.trim() || (run && !run.done)} onClick={start}>시작</button>
       </div>
+      {run && <ResearchProgress run={run} />}
       {run && (
         <div className="log-view" style={{ marginTop: 8 }}>
           {run.progress.map((l: string, i: number) => <div key={i} className="mono small dim">{l}</div>)}

@@ -9,6 +9,7 @@ export const api = {
   devinPrintOnce: (cwd: string, prompt: string, model?: string, mode?: string) =>
     invoke<string>("devin_print_once", { cwd, prompt, model, permissionMode: mode }),
   devinLogin: () => invoke<void>("devin_login"),
+  devinSelfcheck: () => invoke<any>("devin_selfcheck"),
   urlOpen: (url: string) => invoke<void>("url_open", { url }),
   pickFolder: (defaultDir?: string) =>
     invoke<string | null>("pick_folder", { default: defaultDir ?? null }),

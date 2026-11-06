@@ -92,6 +92,20 @@ export async function installEventBridge() {
       case "usage":
         useStore.setState((st) => ({ usage: { ...st.usage, [agentId]: payload } }));
         break;
+      case "auth-fallback": {
+        const stage = payload?.stage ?? "";
+        const message = payload?.message ?? "";
+        if (stage === "done") {
+          useStore.setState({ authFallback: null });
+          S().notify("브라우저 인증 완료", "ok");
+          refreshInfo();
+        } else {
+          useStore.setState({ authFallback: { stage, message, at: Date.now(), agentId } });
+          S().notify(message, stage === "failed" ? "err" : "info");
+        }
+        S().pushLog({ agentId, label, line: `[auth-fallback:${stage}] ${message}` });
+        break;
+      }
     }
   });
   await ev.workersChanged((list) => useStore.setState({ workers: list }));
@@ -115,8 +129,26 @@ export async function refreshInfo() {
   try { useStore.setState({ settings: await api.settingsGet() }); } catch {}
 }
 
+/** Devin 호환성 자가 점검 — 앱 시작 시 한 번, 설정에서 수동 재실행. */
+export async function runSelfcheck(force = false) {
+  const st = useStore.getState();
+  if (st.compatRunning) return;
+  if (st.compat && !force) return;
+  useStore.setState({ compatRunning: true });
+  try {
+    const r = await api.devinSelfcheck();
+    useStore.setState({ compat: r });
+    if (!r.ok) st.notify(`Devin 호환성 점검: 핵심 항목 실패 ${r.failures}건 — 설정에서 확인`, "err");
+    else if (force) st.notify("Devin 호환성 점검 통과", "ok");
+  } catch (e) {
+    useStore.setState({ compat: { ok: false, failures: 1, checks: [{ id: "run", name: "자가 점검 실행", ok: false, critical: true, detail: `${e}` }], ranAt: new Date().toISOString() } });
+  } finally { useStore.setState({ compatRunning: false }); }
+}
+
 export async function refreshAll() {
   await refreshInfo();
+  // 시작 3초 뒤 자가 점검 (devin 프로세스 2개를 잠깐 띄운다)
+  setTimeout(() => runSelfcheck(false), 3000);
   try {
     const p = await api.projectList();
     useStore.setState({ projects: p.projects ?? [], activeProjectId: p.active ?? null });

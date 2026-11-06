@@ -33,6 +33,47 @@ pub struct ResearchRun {
     pub error: Option<String>,
     pub artifacts: Vec<String>,
     pub started_at: String,
+    // ---- 진행 지표 (실시간 현황용) ----
+    /// 전체 단계 수 = 계획 1 + 질문 수 + 검토 회차 + 보강 회차 + 종합(선택)
+    #[serde(default)]
+    pub steps_total: u32,
+    #[serde(default)]
+    pub steps_done: u32,
+    /// 수집(sweep) 단계의 질문 수 / 완료 수
+    #[serde(default)]
+    pub sweep_total: u32,
+    #[serde(default)]
+    pub sweep_done: u32,
+    /// 현재 검토 회차 / 총 회차
+    #[serde(default)]
+    pub round: u32,
+    #[serde(default)]
+    pub rounds_total: u32,
+    /// 지금 하고 있는 일 한 줄
+    #[serde(default)]
+    pub current: String,
+    #[serde(default)]
+    pub phase_started_at: String,
+}
+
+/// 파이프라인 전체 단계 수 (질문 수가 확정되면 다시 계산).
+fn total_steps(spec: &ResearchSpec, questions: u32) -> u32 {
+    let rounds = spec.review_rounds.max(1);
+    1 + questions + rounds + spec.refine_rounds.min(rounds) + if spec.synthesize { 1 } else { 0 }
+}
+
+/// 런을 고치고 스냅샷을 이벤트로 내보낸다 (progress 로그는 남기지 않음).
+fn mutate(state: &AppState, app: &AppHandle, id: &str, f: impl FnOnce(&mut ResearchRun)) {
+    let snap = {
+        let mut g = state.research.lock();
+        if let Some(r) = g.get_mut(id) {
+            f(r);
+        }
+        g.get(id).cloned()
+    };
+    if let Some(r) = snap {
+        emit(app, &r, "");
+    }
 }
 
 fn emit(app: &AppHandle, run: &ResearchRun, msg: &str) {
@@ -62,6 +103,14 @@ pub async fn research_start(
         error: None,
         artifacts: vec![],
         started_at: crate::workers::now_iso(),
+        steps_total: total_steps(&spec, (spec.researchers * spec.questions_per_researcher).max(1)),
+        steps_done: 0,
+        sweep_total: 0,
+        sweep_done: 0,
+        round: 0,
+        rounds_total: spec.review_rounds.max(1),
+        current: "대기열".into(),
+        phase_started_at: crate::workers::now_iso(),
     };
     state.research.lock().insert(id.clone(), run.clone());
     emit(&app, &run, "대기열에 추가");
@@ -115,6 +164,8 @@ fn note(state: &AppState, app: &AppHandle, id: &str, msg: impl Into<String>) {
 fn set_phase(state: &AppState, app: &AppHandle, id: &str, p: &str) {
     if let Some(r) = state.research.lock().get_mut(id) {
         r.phase = p.to_string();
+        r.phase_started_at = crate::workers::now_iso();
+        r.current = String::new();
     }
     note(state, app, id, format!("=== 단계: {p} ==="));
 }
@@ -138,6 +189,7 @@ async fn run_pipeline(
     // ---- PLAN ----
     set_phase(state, &app, &id, "plan");
     let n_q = (spec.researchers * spec.questions_per_researcher).max(1);
+    mutate(state, &app, &id, |r| r.current = format!("플래너가 리서치 질문 {n_q}개를 만드는 중"));
     let plan_path = format!("{dir}/research/plan.json");
     let plan_prompt = format!(
         "당신은 리서치 플래너입니다. 주제: \"{topic}\".\n\
@@ -163,17 +215,29 @@ async fn run_pipeline(
                 .map(|i| format!("{} — 리서치 질문 {}", spec.topic, i + 1))
                 .collect()
         });
+    let q_n = questions.len() as u32;
+    mutate(state, &app, &id, |r| {
+        r.steps_done += 1;
+        r.sweep_total = q_n;
+        r.steps_total = total_steps(&r.spec, q_n);
+    });
     note(state, &app, &id, format!("계획: 질문 {}개", questions.len()));
 
     // ---- SWEEP (parallel, capped at spec.researchers in flight) ----
     set_phase(state, &app, &id, "sweep");
     let indexed: Vec<(usize, String)> = questions.iter().cloned().enumerate().collect();
     for chunk in indexed.chunks(spec.researchers.max(1) as usize) {
+        let (first, last) = (chunk.first().map(|c| c.0 + 1).unwrap_or(1), chunk.last().map(|c| c.0 + 1).unwrap_or(1));
+        let n_in_flight = chunk.len();
+        mutate(state, &app, &id, |r| {
+            r.current = format!("리서처 {n_in_flight}명이 질문 {first}~{last} 조사 중 ({}/{} 완료)", r.sweep_done, r.sweep_total)
+        });
         let mut handles = Vec::new();
         for (idx, q2) in chunk.iter().cloned() {
             let app2 = app.clone();
             let dir2 = dir.clone();
             let m2 = model.clone();
+            let id2 = id.clone();
             handles.push(tauri::async_runtime::spawn(async move {
                 let st = app2.state::<AppState>();
                 let prompt = format!(
@@ -181,7 +245,7 @@ async fn run_pipeline(
                      결과를 research/raw/q{idx:02}.md 에 한국어로 씁니다: 주장 표(| 주장 | 확신도 | 출처 URL | 확인 날짜 |), \
                      메모, 그리고 `## 출처` 목록. 실제로 가져온(fetch한) 페이지만 인용합니다. 끝나면 DONE 이라고 답하세요."
                 );
-                run_oneshot_worker(
+                let res = run_oneshot_worker(
                     st.inner(),
                     app2.clone(),
                     &format!("research-{idx}"),
@@ -190,7 +254,13 @@ async fn run_pipeline(
                     &prompt,
                     true,
                 )
-                .await
+                .await;
+                mutate(st.inner(), &app2, &id2, |r| {
+                    r.sweep_done += 1;
+                    r.steps_done += 1;
+                    r.current = format!("질문 {}/{} 수집 완료 — 질문 {} 끝", r.sweep_done, r.sweep_total, idx + 1);
+                });
+                res
             }));
         }
         for h in handles {
@@ -206,6 +276,10 @@ async fn run_pipeline(
     // ---- REVIEW × REFINE ----
     for round in 1..=spec.review_rounds.max(1) {
         set_phase(state, &app, &id, &format!("review-{round}"));
+        mutate(state, &app, &id, |r| {
+            r.round = round;
+            r.current = format!("{round}차 검토: 수집 자료 교차 검증 (모순·공백 찾기)");
+        });
         let review_prompt = format!(
             "당신은 \"{topic}\" 리서치의 {round}차 검토자입니다. research/raw/ 아래 모든 파일을 읽고 주장을 교차 검증하세요. \
              모순, 빠진 관점, 출처 없는 주장을 찾아 research/review/round-{round}.md 에 한국어로 씁니다: \
@@ -213,20 +287,24 @@ async fn run_pipeline(
             topic = spec.topic
         );
         run_oneshot_worker(state, app.clone(), "research-reviewer", &dir, &model, &review_prompt, auto).await?;
+        mutate(state, &app, &id, |r| r.steps_done += 1);
 
         if round <= spec.refine_rounds {
             set_phase(state, &app, &id, &format!("refine-{round}"));
+            mutate(state, &app, &id, |r| r.current = format!("{round}차 보강: 검토에서 나온 공백을 추가 조사"));
             let refine_prompt = format!(
                 "research/review/round-{round}.md 의 `## 공백` 절을 읽고 각 공백을 web_search/web_fetch 로 추가 조사한 뒤 \
                  research/raw/refine-{round}.md 에 같은 주장 표 형식으로 덧붙이세요. 끝나면 DONE 이라고 답하세요."
             );
             run_oneshot_worker(state, app.clone(), "research-refiner", &dir, &model, &refine_prompt, auto).await?;
+            mutate(state, &app, &id, |r| r.steps_done += 1);
         }
     }
 
     // ---- SYNTH ----
     if spec.synthesize {
         set_phase(state, &app, &id, "synth");
+        mutate(state, &app, &id, |r| r.current = "종합 보고서 작성 + research/INDEX.md 갱신".into());
         let slug: String = spec
             .topic
             .to_lowercase()
@@ -248,11 +326,16 @@ async fn run_pipeline(
         run_oneshot_worker(state, app.clone(), "research-synth", &dir, &model, &synth_prompt, auto).await?;
         if let Some(r) = state.research.lock().get_mut(&id) {
             r.artifacts.push(format!("research/{slug}.md"));
+            r.steps_done += 1;
         }
         note(state, &app, &id, format!("종합 → research/{slug}.md"));
     }
 
     set_phase(state, &app, &id, "done");
+    mutate(state, &app, &id, |r| {
+        r.current = "완료".into();
+        r.steps_done = r.steps_total;
+    });
     let snap = {
         let mut g = state.research.lock();
         if let Some(r) = g.get_mut(&id) {

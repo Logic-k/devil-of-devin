@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { refreshInfo } from "../lib/events";
 import { ModelInput } from "../components/fields";
 import UpdateCard from "../components/UpdateCard";
+import CompatCard from "../components/CompatCard";
 
 const MODES = ["smart", "accept-edits", "bypass", "plan", "ask"];
 
@@ -120,6 +121,8 @@ export default function SettingsView() {
         </label>
         <div className="small dim">유용한 변수: DEVIN_REFUSAL_FALLBACK=swe-2-max,swe-2-flash · DEVIN_MODEL</div>
       </div>
+
+      <CompatCard />
 
       <SecretVault />
 

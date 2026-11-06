@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod acp;
+mod compat;
 mod devin_cli;
 mod harness;
 mod hooks;
@@ -62,6 +63,7 @@ fn main() {
             devin_cli::devin_models,
             devin_cli::devin_print_once,
             devin_cli::pick_folder,
+            compat::devin_selfcheck,
             // acp
             acp::acp_spawn,
             acp::acp_call,
