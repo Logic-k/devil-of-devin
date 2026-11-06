@@ -14,7 +14,7 @@ function stepList(run: any): { key: string; label: string }[] {
   return steps;
 }
 
-const PHASE_KO: Record<string, string> = { queued: "대기", plan: "계획", sweep: "수집", synth: "종합", done: "완료", error: "오류" };
+const PHASE_KO: Record<string, string> = { queued: "대기", plan: "계획", sweep: "수집", synth: "종합", done: "완료", error: "오류", stopped: "중단됨" };
 function phaseLabel(p: string) {
   if (PHASE_KO[p]) return PHASE_KO[p];
   const m = p.match(/^(review|refine)-(\d+)$/);
@@ -40,7 +40,7 @@ export default function ResearchProgress({ run, compact = false }: { run: any; c
 
   const total = Math.max(1, run.stepsTotal ?? 1);
   const done = Math.min(total, run.stepsDone ?? 0);
-  const pct = run.done && !run.error ? 100 : Math.round((done / total) * 100);
+  const pct = run.done && !run.error && run.phase !== "stopped" ? 100 : Math.round((done / total) * 100);
   const started = run.startedAt ? Date.parse(run.startedAt) : NaN;
   const elapsed = isNaN(started) ? 0 : Date.now() - started;
   const eta = !run.done && done > 0 ? (elapsed / done) * (total - done) : null;
@@ -62,7 +62,7 @@ export default function ResearchProgress({ run, compact = false }: { run: any; c
     <div className="rp">
       <div className="row small" style={{ justifyContent: "space-between" }}>
         <span>
-          <b>{run.done ? (run.error ? "오류" : "완료") : phaseLabel(run.phase)}</b>
+          <b>{run.done ? (run.error ? "오류" : run.phase === "stopped" ? "중단됨" : "완료") : phaseLabel(run.phase)}</b>
           {!run.done && run.roundsTotal > 1 && run.round > 0 && <span className="dim"> · 검토 {run.round}/{run.roundsTotal}회차</span>}
           {run.phase === "sweep" && <span className="dim"> · 질문 {run.sweepDone}/{run.sweepTotal}</span>}
           <span className="dim"> · 단계 {done}/{total}</span>
@@ -73,12 +73,12 @@ export default function ResearchProgress({ run, compact = false }: { run: any; c
           {!run.done && done === 0 && " · 첫 단계가 끝나면 예상 시간을 계산합니다"}
         </span>
       </div>
-      <div className={`rp-bar ${run.done ? (run.error ? "err" : "done") : ""}`}><div style={{ width: `${pct}%` }} /></div>
+      <div className={`rp-bar ${run.done ? (run.error || run.phase === "stopped" ? "err" : "done") : ""}`}><div style={{ width: `${pct}%` }} /></div>
       {run.current && !run.done && <div className="small">⏳ {run.current}</div>}
       <div className="rp-steps">
         {steps.map((s, i) => (
-          <span key={s.key} className={`rp-step ${run.done && !run.error ? "done" : i < nowIdx ? "done" : i === nowIdx ? "now" : ""}`}>
-            {i < nowIdx || (run.done && !run.error) ? "✓ " : i === nowIdx ? "▶ " : ""}{s.label}
+          <span key={s.key} className={`rp-step ${run.done && !run.error && run.phase !== "stopped" ? "done" : i < nowIdx ? "done" : i === nowIdx ? "now" : ""}`}>
+            {i < nowIdx || (run.done && !run.error && run.phase !== "stopped") ? "✓ " : i === nowIdx ? "▶ " : ""}{s.label}
           </span>
         ))}
       </div>

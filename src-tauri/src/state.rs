@@ -11,6 +11,8 @@ pub struct AppState {
     pub loops: Mutex<HashMap<String, crate::looprun::LoopRun>>,
     /// Stop flags for running loops (run id → requested stop kind).
     pub loop_ctl: Mutex<HashMap<String, crate::looprun::LoopControl>>,
+    /// Research runs the user asked to stop (run id).
+    pub research_stop: Mutex<std::collections::HashSet<String>>,
     pub hook_server: Mutex<Option<crate::hooks::HookServer>>,
     pub settings: Mutex<Settings>,
     pub http: reqwest::Client,
@@ -29,6 +31,7 @@ impl AppState {
             research: Mutex::new(HashMap::new()),
             loops: Mutex::new(HashMap::new()),
             loop_ctl: Mutex::new(HashMap::new()),
+            research_stop: Mutex::new(std::collections::HashSet::new()),
             hook_server: Mutex::new(None),
             settings: Mutex::new(settings),
             http: reqwest::Client::builder()

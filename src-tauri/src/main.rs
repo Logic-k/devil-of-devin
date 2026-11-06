@@ -114,6 +114,7 @@ fn main() {
             research::research_start,
             research::research_status,
             research::research_list,
+            research::research_stop,
             // hooks
             hooks::hook_server_start,
             hooks::hook_server_stop,

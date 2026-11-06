@@ -120,21 +120,66 @@ pub async fn research_start(
     tauri::async_runtime::spawn(async move {
         let state = app2.state::<AppState>();
         if let Err(e) = run_pipeline(state.inner(), app2.clone(), id2.clone(), spec).await {
+            let stopped = stop_requested(state.inner(), &id2) || e == "__STOPPED__";
             let snap = {
                 let mut g = state.research.lock();
                 if let Some(r) = g.get_mut(&id2) {
-                    r.error = Some(e.clone());
                     r.done = true;
-                    r.phase = "error".into();
+                    if stopped {
+                        r.phase = "stopped".into();
+                        r.current = "사용자가 중단함 — 이미 쓰인 research/ 파일은 남아 있음".into();
+                    } else {
+                        r.error = Some(e.clone());
+                        r.phase = "error".into();
+                    }
                 }
                 g.get(&id2).cloned()
             };
             if let Some(r) = snap {
-                emit(&app2, &r, &format!("오류: {e}"));
+                emit(&app2, &r, &if stopped { "중단됨".to_string() } else { format!("오류: {e}") });
             }
         }
+        state.research_stop.lock().remove(&id2);
     });
     Ok(id)
+}
+
+fn stop_requested(state: &AppState, id: &str) -> bool {
+    state.research_stop.lock().contains(id)
+}
+
+/// 단계 경계마다 호출: 중단 요청이 있으면 파이프라인을 끝낸다.
+fn check_stop(state: &AppState, id: &str) -> Result<(), String> {
+    if stop_requested(state, id) {
+        Err("__STOPPED__".into())
+    } else {
+        Ok(())
+    }
+}
+
+/// 리서치 중단: 플래그를 세우고 이 런의 일회성 워커(research-*)를 모두 종료한다.
+/// 이미 쓰인 research/ 파일은 그대로 남는다.
+#[tauri::command]
+pub async fn research_stop(state: State<'_, AppState>, app: AppHandle, id: String) -> Result<(), String> {
+    let run = state.research.lock().get(&id).cloned().ok_or("해당 리서치 런이 없습니다")?;
+    if run.done {
+        return Err("이미 끝난 런입니다".into());
+    }
+    state.research_stop.lock().insert(id.clone());
+    mutate(state.inner(), &app, &id, |r| r.current = "중단 요청 — 리서치 워커 종료 중".into());
+    note(state.inner(), &app, &id, "사용자가 중단을 요청했습니다");
+    let target = run.spec.target_dir.clone();
+    let victims: Vec<_> = state
+        .acp
+        .lock()
+        .values()
+        .filter(|a| a.label.starts_with("research-") && a.cwd == target)
+        .cloned()
+        .collect();
+    for a in victims {
+        a.kill().await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -187,6 +232,7 @@ async fn run_pipeline(
     std::fs::create_dir_all(format!("{dir}/research/review")).map_err(|e| e.to_string())?;
 
     // ---- PLAN ----
+    check_stop(state, &id)?;
     set_phase(state, &app, &id, "plan");
     let n_q = (spec.researchers * spec.questions_per_researcher).max(1);
     mutate(state, &app, &id, |r| r.current = format!("플래너가 리서치 질문 {n_q}개를 만드는 중"));
@@ -227,6 +273,7 @@ async fn run_pipeline(
     set_phase(state, &app, &id, "sweep");
     let indexed: Vec<(usize, String)> = questions.iter().cloned().enumerate().collect();
     for chunk in indexed.chunks(spec.researchers.max(1) as usize) {
+        check_stop(state, &id)?;
         let (first, last) = (chunk.first().map(|c| c.0 + 1).unwrap_or(1), chunk.last().map(|c| c.0 + 1).unwrap_or(1));
         let n_in_flight = chunk.len();
         mutate(state, &app, &id, |r| {
@@ -275,6 +322,7 @@ async fn run_pipeline(
 
     // ---- REVIEW × REFINE ----
     for round in 1..=spec.review_rounds.max(1) {
+        check_stop(state, &id)?;
         set_phase(state, &app, &id, &format!("review-{round}"));
         mutate(state, &app, &id, |r| {
             r.round = round;
@@ -290,6 +338,7 @@ async fn run_pipeline(
         mutate(state, &app, &id, |r| r.steps_done += 1);
 
         if round <= spec.refine_rounds {
+            check_stop(state, &id)?;
             set_phase(state, &app, &id, &format!("refine-{round}"));
             mutate(state, &app, &id, |r| r.current = format!("{round}차 보강: 검토에서 나온 공백을 추가 조사"));
             let refine_prompt = format!(
@@ -303,6 +352,7 @@ async fn run_pipeline(
 
     // ---- SYNTH ----
     if spec.synthesize {
+        check_stop(state, &id)?;
         set_phase(state, &app, &id, "synth");
         mutate(state, &app, &id, |r| r.current = "종합 보고서 작성 + research/INDEX.md 갱신".into());
         let slug: String = spec
@@ -331,6 +381,7 @@ async fn run_pipeline(
         note(state, &app, &id, format!("종합 → research/{slug}.md"));
     }
 
+    check_stop(state, &id)?;
     set_phase(state, &app, &id, "done");
     mutate(state, &app, &id, |r| {
         r.current = "완료".into();

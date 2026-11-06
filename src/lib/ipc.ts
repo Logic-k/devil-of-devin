@@ -81,6 +81,7 @@ export const api = {
   // research
   researchStart: (spec: any) => invoke<string>("research_start", { spec }),
   researchStatus: (id: string) => invoke<any>("research_status", { id }),
+  researchStop: (id: string) => invoke<void>("research_stop", { id }),
   researchList: () => invoke<any[]>("research_list"),
 
   // pty

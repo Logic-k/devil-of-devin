@@ -163,6 +163,9 @@ export default function PipelineView() {
               <span className={`badge ${r.done ? (r.error ? "err" : "ok") : "run"}`}>{r.phase}</span>
               <span>리서치: {r.spec.topic}</span>
               {!r.done && <ResearchProgress run={r} compact />}
+              {!r.done && (
+                <button className="tiny" title="진행 중인 리서치 워커를 종료하고 런을 중단합니다" onClick={() => api.researchStop(r.id).catch((e) => notify(`${e}`, "err"))}>■ 중단</button>
+              )}
               {r.done && !r.error && researchIndex && <span className="badge ok" title="IDEA·TRD 단계 프롬프트에 research/INDEX.md 참조가 자동으로 붙습니다">IDEA·TRD에 자동 참조</span>}
               {r.artifacts?.map((a: string) => <button key={a} className="tiny" onClick={() => openDoc(a)}>{a}</button>)}
             </div>
@@ -253,6 +256,10 @@ function ResearchCard({ projectPath, defaultModel }: { projectPath: string; defa
         {num("refineRounds", "보강")}
         <label className="field">모델<ModelInput value={spec.model} placeholder={defaultModel ?? "swe-2-max"} onChange={(v) => setSpec({ ...spec, model: v })} style={{ width: 160 }} /></label>
         <button className="primary" disabled={!spec.topic.trim() || (run && !run.done)} onClick={start}>시작</button>
+        {run && !run.done && (
+          <button className="danger" title="진행 중인 리서치 워커를 종료하고 런을 중단합니다. 이미 쓰인 research/ 파일은 남습니다."
+            onClick={() => api.researchStop(run.id).catch((e) => notify(`${e}`, "err"))}>■ 중단</button>
+        )}
       </div>
       {run && <ResearchProgress run={run} />}
       {run && (
