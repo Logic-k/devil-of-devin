@@ -1,6 +1,6 @@
 [package]
 name = "devil-of-devin"
-version = "0.1.0"
+version = "0.2.0"
 description = "Devil of Devin — Devin CLI worker orchestrator desktop app"
 edition = "2021"
 rust-version = "1.77.2"
@@ -11,6 +11,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-notification = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["full"] }

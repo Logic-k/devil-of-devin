@@ -3,6 +3,7 @@ import { api } from "../lib/ipc";
 import { useStore } from "../store";
 import { refreshInfo } from "../lib/events";
 import { ModelInput } from "../components/fields";
+import UpdateCard from "../components/UpdateCard";
 
 const MODES = ["smart", "accept-edits", "bypass", "plan", "ask"];
 
@@ -121,6 +122,8 @@ export default function SettingsView() {
       </div>
 
       <SecretVault />
+
+      <UpdateCard />
 
       <div className="row sticky-save">
         <button className="primary" onClick={save}>설정 저장</button>

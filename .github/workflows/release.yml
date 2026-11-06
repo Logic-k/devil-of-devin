@@ -1,0 +1,47 @@
+# 태그 v* 를 푸시하면 Windows 설치 파일(NSIS)을 빌드·서명하고 GitHub Release 에 올린다.
+# latest.json 이 함께 생성되어 앱의 자동 업데이트 엔드포인트가 된다.
+#
+# 필요한 저장소 시크릿:
+#   TAURI_SIGNING_PRIVATE_KEY          ~/.tauri/devil-of-devin.key 내용
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD 키 비밀번호 (없으면 빈 값)
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Devil of Devin ${{ github.ref_name }}"
+          releaseBody: "자세한 변경 내용은 커밋 로그를 참고하세요. 앱은 다음 실행 시 자동으로 이 버전으로 업데이트됩니다."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

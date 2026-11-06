@@ -1,0 +1,25 @@
+# PR/푸시마다 프론트 타입체크·빌드와 Rust 검사·테스트를 돌린다 (릴리즈 빌드는 release.yml).
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npx tsc -b && npx vite build
+      - run: cargo check && cargo test
+        working-directory: src-tauri

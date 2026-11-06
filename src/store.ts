@@ -16,6 +16,10 @@ export interface AgentLog { at: number; agentId: string; label: string; line: st
 export interface Usage { totalTokens: number; inputTokens: number; outputTokens: number; prompts: number }
 
 export interface Project { id: string; name: string; path: string; createdAt: string }
+export interface UpdateState {
+  available: boolean; version: string | null; notes: string; date: string | null;
+  checking: boolean; downloading: boolean; progress: number; error: string | null; dismissed: boolean; checkedAt: number;
+}
 
 interface Store {
   info: any;
@@ -41,6 +45,7 @@ interface Store {
   activityOpen: boolean;
   loginState: { busy: boolean; url: string | null };
   toast: { id: number; text: string; kind: "ok" | "err" | "info" } | null;
+  update: UpdateState | null;
 
   set: (p: Partial<Store>) => void;
   setView: (v: View) => void;
@@ -82,6 +87,7 @@ export const useStore = create<Store>((set, get) => ({
   activityOpen: false,
   loginState: { busy: false, url: null },
   toast: null,
+  update: null,
 
   set: (p) => set(p),
   setView: (view) => set({ view }),

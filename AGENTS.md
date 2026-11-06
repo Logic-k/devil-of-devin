@@ -50,6 +50,11 @@ node tools/loop-e2e.mjs D:\dod-looptest   # 스크래치 프로젝트로 Loop �
 
 MSVC는 `C:\Program Files\Microsoft Visual Studio\2022\Community`.
 
+릴리즈: 버전을 `package.json`·`tauri.conf.json`·`Cargo.toml` 세 곳에서 올리고 `v*` 태그를 푸시하면
+`.github/workflows/release.yml`(tauri-action)이 NSIS 빌드·서명·GitHub Release·`latest.json`을 만든다.
+앱의 `tauri-plugin-updater`(`src/lib/updater.ts`, `components/UpdateBanner|UpdateCard`)가 그 엔드포인트를 확인한다.
+서명 개인키 `~/.tauri/devil-of-devin.key` 는 저장소 시크릿 `TAURI_SIGNING_PRIVATE_KEY` 로만 쓰고 절대 커밋하지 않는다.
+
 ## Devin CLI 실측 메모
 
 - 바이너리: `%LOCALAPPDATA%\devin\cli\bin\devin.exe` (3000.11.234)

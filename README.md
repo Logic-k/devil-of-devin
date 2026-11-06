@@ -16,8 +16,25 @@
 ```bash
 npm install
 npm run tauri dev      # 개발
-npm run tauri build    # 배포용 .exe / .msi → src-tauri/target/release/bundle/
+npm run tauri build    # 배포용 NSIS 설치 파일 → src-tauri/target/release/bundle/nsis/
 ```
+
+## 릴리즈 / 자동 업데이트
+
+앱은 시작 5초 뒤와 6시간마다 GitHub Release 의 `latest.json` 을 확인하고, 새 버전이 있으면 상단 띠로 알린다.
+"업데이트 설치"를 누르면 서명 검증 → 설치 → 재시작까지 자동이다 (설정 → 업데이트 카드에서 수동 확인도 가능).
+
+새 버전을 내는 절차:
+
+```bash
+# 1) 버전 올리기 (package.json · src-tauri/tauri.conf.json · src-tauri/Cargo.toml 세 곳)
+# 2) 커밋 후 태그 푸시 → .github/workflows/release.yml 이 빌드·서명·Release 업로드
+git tag v0.2.1 && git push origin master --tags
+```
+
+- 서명 키: `~/.tauri/devil-of-devin.key` (비밀, 분실 시 기존 설치본에 업데이트를 보낼 수 없다). 공개키는 `tauri.conf.json` 의 `plugins.updater.pubkey`.
+- 저장소 시크릿 `TAURI_SIGNING_PRIVATE_KEY`(키 파일 내용) · `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`(없으면 빈 값) 가 필요하다.
+- 업데이트 엔드포인트는 공개 저장소의 Release 여야 한다 (비공개 저장소는 인증 없이 받을 수 없다).
 
 ## 화면 구성
 

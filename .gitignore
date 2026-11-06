@@ -7,3 +7,4 @@ Thumbs.db
 tools/login-capture.txt
 .devil/
 .devin/hooks.v1.json
+*.key

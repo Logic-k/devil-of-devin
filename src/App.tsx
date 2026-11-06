@@ -12,6 +12,8 @@ import WorkersView from "./views/WorkersView";
 import SkillsView from "./views/SkillsView";
 import TerminalView from "./views/TerminalView";
 import SettingsView from "./views/SettingsView";
+import UpdateBanner from "./components/UpdateBanner";
+import { checkForUpdate } from "./lib/updater";
 
 const TITLES: Record<string, string> = {
   pipeline: "파이프라인", loop: "루프", docs: "문서", workers: "워커",
@@ -29,7 +31,13 @@ export default function App() {
   const set = useStore((s) => s.set);
   const pendingPerms = perms.length;
 
-  useEffect(() => { installEventBridge().then(refreshAll); }, []);
+  useEffect(() => {
+    installEventBridge().then(refreshAll);
+    // 시작 5초 뒤, 이후 6시간마다 GitHub Release 확인 (개발 모드는 생략)
+    const first = setTimeout(() => checkForUpdate(false), 5000);
+    const every = setInterval(() => checkForUpdate(false), 6 * 60 * 60 * 1000);
+    return () => { clearTimeout(first); clearInterval(every); };
+  }, []);
 
   // login PTY: surface the auth URL as a button
   useEffect(() => {
@@ -82,6 +90,7 @@ export default function App() {
             </button>
           </div>
         </div>
+        <UpdateBanner />
         <div className="body">
           <div className="main">
             {view === "pipeline" && <PipelineView />}
