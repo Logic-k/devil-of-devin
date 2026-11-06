@@ -5,3 +5,5 @@ src-tauri/target/
 .DS_Store
 Thumbs.db
 tools/login-capture.txt
+.devil/
+.devin/hooks.v1.json

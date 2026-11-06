@@ -89,8 +89,10 @@ pub fn inject_into(cwd: &str, port: u16) -> Result<String, String> {
         .unwrap_or_else(|| json!({}));
 
     let marker = format!("devil-hook-{port}");
+    // devin hooks run under Git Bash on Windows — must end with a zero exit
+    // status (a failing UserPromptSubmit hook BLOCKS the prompt entirely).
     let cmd = format!(
-        "curl.exe -s -m 3 -X POST http://127.0.0.1:{port}/hook -H \"Content-Type: application/json\" --data-binary @- >nul 2>nul & exit /b 0"
+        "curl.exe -s -m 3 -X POST http://127.0.0.1:{port}/hook -H \"Content-Type: application/json\" --data-binary @- >/dev/null 2>&1 || true"
     );
 
     let obj = doc
@@ -101,21 +103,17 @@ pub fn inject_into(cwd: &str, port: u16) -> Result<String, String> {
         let arr = entry
             .as_array_mut()
             .ok_or_else(|| "hook event is not an array".to_string())?;
-        let already = arr.iter().any(|m| {
-            m.to_string().contains(&marker)
-                || m.to_string().contains(&format!("127.0.0.1:{port}/hook"))
-        });
-        if !already {
-            arr.push(json!({
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    "command": cmd,
-                    "timeout": 5,
-                    "_devil": marker
-                }]
-            }));
-        }
+        // drop stale devil entries (old ports / old broken commands), keep user hooks
+        arr.retain(|m| !m.to_string().contains("_devil"));
+        arr.push(json!({
+            "matcher": "",
+            "hooks": [{
+                "type": "command",
+                "command": cmd,
+                "timeout": 5,
+                "_devil": marker
+            }]
+        }));
     }
     std::fs::write(&path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
