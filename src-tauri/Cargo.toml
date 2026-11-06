@@ -17,7 +17,6 @@ tokio = { version = "1", features = ["full"] }
 portable-pty = "0.9"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
-thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "6"
@@ -26,6 +25,8 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 keyring = { version = "3", features = ["windows-native"] }
 parking_lot = "0.12"
 rfd = "0.15"
+serde_yaml = "0.9"
+chrono = "0.4"
 
 [profile.dev]
 incremental = true

@@ -1,93 +1,76 @@
 # Devil of Devin 😈
 
-**Devin CLI를 감싸는 개인용 데스크톱 워커/오케스트레이션 앱.**
-Tauri 2 + React + Rust. `devin acp`(Agent Client Protocol over stdio)를
-구동해 CLI급 가벼움으로 워커 스폰, 리서치 파이프라인, 스킬 관리까지 처리한다.
+**Devin CLI를 감싸는 개인용 데스크톱 오케스트레이터.** Tauri 2 + React + Rust.
+[harness_loop_full_korean](https://github.com/GangJaeYu/harness_loop_full_korean)의
+"IDEA → PRD → TRD → 설계 → 계획 → 하네스 → 루프" 흐름을 기본 워크플로우로 삼아,
+문서 단계는 Devin 세션과 대화로 진행하고 **Loop(구현·게이트·독립 검증·통합)는 앱이 자율로 돌립니다.**
 
 ## 요구사항
 
-- Windows 10/11
-- [Devin CLI](https://devin.ai) — `%LOCALAPPDATA%\devin\cli\bin\devin.exe`
-  (자동 탐지되며, 설정에서 경로 지정 가능)
-- Rust 1.77+ (`cargo`), Node 18+ (`npm`)
-- WebView2 (Windows 11 기본 탑재)
+- Windows 10/11, WebView2
+- [Devin CLI](https://devin.ai) (`%LOCALAPPDATA%\devin\cli\bin\devin.exe`, 로그인되어 있을 것)
+- git, Node 18+, Rust 1.77+ (개발 시)
 
 ## 실행 / 빌드
 
 ```bash
 npm install
-npm run tauri dev      # 개발 모드 (핫리로드)
-npm run tauri build    # 배포용 .exe / .msi 생성 → src-tauri/target/release/bundle/
+npm run tauri dev      # 개발
+npm run tauri build    # 배포용 .exe / .msi → src-tauri/target/release/bundle/
 ```
 
-검증만 할 때: `cargo check`(src-tauri) + `npm run build`(프론트).
+## 화면 구성
 
-## 탭 구성
-
-| 탭 | 기능 |
+| 화면 | 기능 |
 |---|---|
-| **워커** | `devin acp` 에이전트 스폰 → `session/new` 자동 생성. 이름/cwd/모델/역할/자동승인 설정, 프롬프트 스트리밍(메시지·생각·툴콜·플랜), 권한 요청 승인/거절, `session/load`로 이전 세션 이어받기(리플레이 포함), `session/list` 세션 목록 선택, 다중 워커 병렬 관리 |
-| **리서치** | 브리프 입력 → 플래너→리서처 N회→비평가 M회 파이프라인(oneshot 워커) → `research/*.md` 산출물. 반복 횟수·모델 설정 가능 |
-| **개발** | 프로젝트 cwd 선택 → 리서치 md 컨텍스트 주입 후 개발 워커 실행, 진행 상태 스트리밍, 구현↔리뷰 사이클 |
-| **태스크** | 칸반식 보드 — 워커/파이프라인 작업 상태 추적, `tasks.json` 영속화 |
-| **스킬** | 로컬 스킬 스캔(`%APPDATA%\devin\skills`, `.agents\skills`, 플러그인 캐시 등), GitHub 검색·설치(`owner/repo#경로`), 활성/비활성 토글 — 설치 즉시 모든 워커가 사용 가능 |
-| **터미널** | ConPTY로 `devin` TUI 직접 사용, 로그인 세션 연결 지원 |
-| **설정** | devin 경로, 기본 모델(`swe-2-max`), 권한 모드, 훅 서버, MCP 프리셋(Supabase/Vercel), 워커 env, 스킬 디렉터리, 시크릿 보관소 |
+| **파이프라인** | 7단계 진행 상태(산출물 파일 존재로 판정). 단계 카드에서 `/idea-brainstorm` … `/loop-setup` 스킬을 프로젝트의 coordinator 워커에 호출. 리서치 파이프라인(plan→sweep→review→synth → `research/*.md`)도 여기서 실행 |
+| **루프** | `plan_setup/` 태스크 칸반(대기·진행·차단·실패·완료) + 게이트 4칸 상태. Loop 시작/중지/재개, 동시 워커·예산·phase 필터·모델 설정, 태스크별 게이트 출력·검증 보고·시도 기록 |
+| **문서** | docs/ · plan_setup/ · harness_setup/ · loop_setup/ · research/ · .devil/loop/ 마크다운 뷰어/편집 |
+| **워커** | `devin acp` 세션과 자유 대화(스트리밍·도구 호출·플랜·사용량), 세션 모드 전환, 이전 실행 세션 재연결, 파이프라인 워커 대화 열람 |
+| **스킬** | 하네스 스킬 팩 원클릭 설치(버전 고정 가능), 로컬 스킬 스캔/토글, GitHub 검색·설치 |
+| **터미널** | ConPTY로 `devin` TUI 직접 사용 |
+| **설정** | 기본 모델·세션 모드, Loop 엔진(동시 수·시도·타임아웃·모델), 훅 서버, MCP/ENV 주입, 시크릿 보관소 |
+
+상단 **활동** 패널: 워커 훅 이벤트(PreToolUse/PostToolUse/Stop), CLI 경고 로그, 대기 중인 권한 요청.
+
+## 사용 순서
+
+1. 좌측 **프로젝트 ＋** 로 폴더 추가 (git 저장소 권장 — 워크트리 병렬에 필요).
+2. **스킬** 탭에서 하네스 스킬 팩 설치 (`~/.agents/skills/`에 13개).
+3. **파이프라인**에서 아이디어 입력 → `/idea-brainstorm` 실행. 워커 탭의 coordinator 대화에서 질문에 답하며
+   PRD → TRD → 설계 → 계획 → 하네스 → 루프 순으로 진행. 각 단계 산출물은 **문서** 탭에서 바로 확인·편집.
+4. **루프** 탭에서 ▶ Loop 시작. 앱이 의존이 풀린 태스크를 워크트리에 배정하고, 구현 워커 →
+   `lint → unit → e2e` → **구현하지 않은 별도 세션의 task_validation** → `--no-ff` 병합을 반복합니다.
+   같은 방식 3회 실패 시 전략 전환, 끝내 실패하면 증거를 남기고 미완료로 보고합니다.
+   진행 상황은 `plan_setup/STATE.md`(재개 기록) · `LOG.md`(이력) · `.devil/loop/`(증거)에 남습니다.
+
+## 하네스 호환 규약
+
+- 태스크 파일: frontmatter `id / status / depends_on / acceptance_criteria / verification`.
+- 게이트 정의 `harness_setup/quality_gates/{lint,unit,e2e,task_validation}.md`:
+  frontmatter `command:` 또는 첫 ```bash / ```powershell / ```cmd 블록을 앱이 그대로 실행합니다.
+  명령이 없는 게이트는 review 에이전트가 정의를 읽고 판정합니다.
+- 검증 워커는 `devin acp --agent-type review`(읽기 전용+셸)로 새 프로세스·새 세션에서 돌며
+  응답 마지막 줄 `RESULT: PASS|FAIL` 로 판정합니다.
 
 ## 핵심 아키텍처
 
 ```
-React UI ──invoke──> Rust commands ──stdio JSON-RPC──> devin.exe acp
-        <──emit──── ACP updates (session/update 등) <──┘
+React(zustand) ──invoke──> Rust commands ──stdio JSON-RPC──> devin.exe acp (워커당 1 프로세스)
+     <──acp://event / loop://event / workers://changed ... (전역 이벤트 스트림, 한 번만 구독)
 ```
 
-- `src-tauri/src/acp.rs` — ACP 클라이언트: 프로세스 스폰, `initialize` 핸드셰이크,
-  요청/알림 라우팅, **세션 토큰 자동 인증**, 권한 요청 자동응답(`auto_approve`) 또는 UI 전달.
-- `src-tauri/src/workers.rs` — 워커 = ACP 에이전트 1 + 세션 1.
-  `run_oneshot_worker`는 리서치/개발 파이프라인의 일회성 워커.
-- `src-tauri/src/hooks.rs` — `127.0.0.1` 로컬 수신 서버. 앱 시작 시 자동 기동,
-  워커 생성 시 해당 cwd의 `.devin/hooks.v1.json`에 curl POST 훅을 자동 주입
-  (기존 훅 보존) → 워커의 PreToolUse/Stop 등 라이프사이클 이벤트가 UI로 유입.
-- `src-tauri/src/skills.rs` — 스킬 스캔/설치/토글. GitHub code search(토큰
-  없으면 repo search로 폴백) + `git clone --depth 1` 설치.
-- `src-tauri/src/secrets.rs` — Windows 자격증명 관리자(keyring) 시크릿 보관소.
-- 설정: `%APPDATA%\devil-of-devin\settings.json` — 모델, 권한 모드, 훅 포트,
-  `mcp_servers`(모든 워커 `session/new`에 주입), `worker_env`, GitHub 토큰 등.
+- `acp.rs` ACP 클라이언트 (세션 토큰 자동 인증, 모드 전환, 사용량, 프로세스 종료 시 대기 호출 정리)
+- `looprun.rs` Loop 엔진 (태스크/게이트 파서, 워크트리, 게이트 러너, 독립 검증, STATE/LOG)
+- `project.rs` / `harness.rs` 프로젝트·단계·문서, 스킬 팩 설치
+- `workers.rs` 워커 레지스트리(앱 재시작 후 세션 재연결) + 일회성 비상속 세션 러너
 
-## 인증 (중요 — 실측 기반)
+## 인증 (실측)
 
-두 개의 서로 다른 인증 체계가 있다:
-
-1. **CLI 독립 로그인**(`devin auth login` → REPL/print 모드용): 대화형 TUI.
-   `devin auth status`는 `credentials.toml`의 세션 토큰(`devin-session-token$…`)을
-   인정하지 않아 항상 "Not logged in"으로 표시될 수 있다 — **오해 금지**.
-2. **ACP 인증**(이 앱이 쓰는 경로): `credentials.toml`의 `windsurf_api_key`를
-   `authenticate`의 `_meta.api_key`로 전달하면 바로 인증됨. 앱은 agent spawn 시
-   자동으로 이를 수행 → **로그인 버튼 없이 바로 워커 생성 가능**.
-
-로그인 버튼은 토큰 갱신용 폴백(PTY로 `auth login` 실행, 자동 Enter, URL 표시).
+`devin auth status`가 "Not logged in"이라도 `credentials.toml`의 세션 토큰으로 ACP 인증이 됩니다
+(앱이 자동 수행). 상단 배지가 "ACP 토큰"이면 정상. 로그인 버튼은 토큰 갱신용 폴백입니다.
 
 ## MCP 자동화 (Vercel/Supabase)
 
-설정 탭의 **+ Supabase MCP / + Vercel MCP** 버튼으로 `mcp_servers`에
-엔드포인트를 추가하면 모든 워커 세션에 주입된다. 토큰이 필요한 서버는
-`worker_env`(KEY=VALUE)에 넣고 서버 설정에서 참조. 토큰 값에는
-`$secret:NAME`을 써서 Windows 자격증명 관리자(시크릿 보관소 카드)에서 읽게 할 수 있다.
-
-유용한 환경변수 (worker_env에 그대로 사용 가능):
-- `DEVIN_MODEL` — 세션 기본 모델
-- `DEVIN_REFUSAL_FALLBACK=swe-2-max,swe-2-flash` — 제공자 거부 시 폴백 모델
-- `DEVIN_PERMISSION_MODE` — 권한 모드
-
-## 리서치 산출물
-
-`research/` — 프로젝트 브리프, Devin CLI 조사, ACP 프로토콜,
-레퍼런스(CommandCode/omo/Vibe Kanban/GPT Researcher 등), 오케스트레이션 기법,
-아키텍처 문서. 개발 모드는 이 디렉터리의 md를 컨텍스트로 읽는다.
-
-## 참고
-
-- 시제품: `D:\Command Code Desktop\cmdc-gui.exe` (Tauri/ACP 데스크톱 셸 —
-  바이너리만 존재, 구조만 참고)
-- 리서치/개발 파이프라인은 omo(Oh My OpenAgent)의 planner/executor 분리와
-  GPT Researcher의 다중 검토 패턴을 차용
+설정 탭의 **+ supabase MCP / + vercel MCP**로 `mcp_servers`에 추가하면 모든 워커 세션에 주입됩니다.
+토큰은 시크릿 보관소에 저장하고 `$secret:NAME`으로 참조하세요 (env·MCP headers 모두 치환).

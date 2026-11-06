@@ -149,7 +149,7 @@ pub async fn skills_github_search(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Value, String> {
-    let token = state.settings.lock().github_token.clone();
+    let token = crate::secrets::get("GITHUB_TOKEN");
     let mut req = state
         .http
         .get("https://api.github.com/search/code")

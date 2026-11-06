@@ -58,6 +58,11 @@ async fn hook_handler(AxState(ctx): AxState<Arc<HookCtx>>, Json(body): Json<Valu
 }
 
 #[tauri::command]
+pub fn hook_server_status(state: State<'_, AppState>) -> Option<u16> {
+    state.hook_server.lock().as_ref().map(|h| h.port)
+}
+
+#[tauri::command]
 pub fn hook_server_stop(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(h) = state.hook_server.lock().take() {
         let _ = h.shutdown.send(());

@@ -1,98 +1,105 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useStore } from "./store";
+import { installEventBridge, refreshAll } from "./lib/events";
 import { api, ev } from "./lib/ipc";
-import WorkersTab from "./tabs/WorkersTab";
-import ResearchTab from "./tabs/ResearchTab";
-import DevelopTab from "./tabs/DevelopTab";
-import TasksTab from "./tabs/TasksTab";
-import SkillsTab from "./tabs/SkillsTab";
-import TerminalTab from "./tabs/TerminalTab";
-import SettingsTab from "./tabs/SettingsTab";
+import Sidebar from "./components/Sidebar";
+import PermissionModal from "./components/PermissionModal";
+import ActivityPanel from "./components/ActivityPanel";
+import PipelineView from "./views/PipelineView";
+import LoopView from "./views/LoopView";
+import DocsView from "./views/DocsView";
+import WorkersView from "./views/WorkersView";
+import SkillsView from "./views/SkillsView";
+import TerminalView from "./views/TerminalView";
+import SettingsView from "./views/SettingsView";
 
-type Tab = "workers" | "research" | "develop" | "tasks" | "skills" | "terminal" | "settings";
-
-const TABS: [Tab, string][] = [
-  ["workers", "워커"],
-  ["research", "리서치"],
-  ["develop", "개발"],
-  ["tasks", "태스크"],
-  ["skills", "스킬"],
-  ["terminal", "터미널"],
-  ["settings", "설정"],
-];
+const TITLES: Record<string, string> = {
+  pipeline: "파이프라인", loop: "루프", docs: "문서", workers: "워커",
+  skills: "스킬", terminal: "터미널", settings: "설정",
+};
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("workers");
-  const [info, setInfo] = useState<any>(null);
-  const [settings, setSettings] = useState<any>(null);
-  const [loggingIn, setLoggingIn] = useState(false);
-  const [loginUrl, setLoginUrl] = useState<string | null>(null);
+  const view = useStore((s) => s.view);
+  const info = useStore((s) => s.info);
+  const project = useStore((s) => s.activeProject());
+  const activityOpen = useStore((s) => s.activityOpen);
+  const perms = useStore((s) => s.perms);
+  const toast = useStore((s) => s.toast);
+  const loginState = useStore((s) => s.loginState);
+  const set = useStore((s) => s.set);
+  const pendingPerms = perms.length;
 
-  const refresh = async () => {
-    try { setInfo(await api.devinInfo()); } catch { setInfo(null); }
-    try { setSettings(await api.settingsGet()); } catch {}
-  };
-  useEffect(() => { refresh(); }, []);
-  useEffect(() => {
-    const un = ev.loginDone(() => { setLoggingIn(false); setLoginUrl(null); refresh(); });
-    return () => { un.then((f) => f()); };
-  }, []);
+  useEffect(() => { installEventBridge().then(refreshAll); }, []);
 
-  // watch the login PTY output for a URL to surface as a clickable button
+  // login PTY: surface the auth URL as a button
   useEffect(() => {
-    if (!loggingIn) return;
+    if (!loginState.busy) return;
     const un = ev.ptyOut("login", (p) => {
       try {
         const text = atob(p.data);
         const m = text.match(/https?:\/\/[^\s"'<>()]+/);
-        if (m) setLoginUrl(m[0]);
+        if (m) set({ loginState: { busy: true, url: m[0] } });
       } catch {}
     });
-    const t = setTimeout(() => setLoggingIn(false), 120_000);
+    const t = setTimeout(() => set({ loginState: { busy: false, url: null } }), 120_000);
     return () => { un.then((f) => f()); clearTimeout(t); };
-  }, [loggingIn]);
+  }, [loginState.busy]);
 
   const startLogin = () => {
-    setLoggingIn(true);
-    setLoginUrl(null);
-    api.devinLogin().catch((e) => { setLoggingIn(false); alert(`로그인 실패: ${e}`); });
+    set({ loginState: { busy: true, url: null } });
+    api.devinLogin().catch((e) => { set({ loginState: { busy: false, url: null } }); useStore.getState().notify(`로그인 실패: ${e}`, "err"); });
   };
 
+  const authed = info?.authenticated || info?.session_token;
+
   return (
-    <>
-      <div className="topbar">
-        <span className="logo"><span className="logo-mark">😈</span> Devil of Devin</span>
-        <span className={`devin-status ${(info?.authenticated || info?.session_token) ? "ok" : ""}`}>
-          {info?.path
-            ? `devin ${info.version ?? ""} · ${info.authenticated ? "CLI 인증됨" : info.session_token ? "ACP 토큰 사용 가능" : "미인증"}`
-            : "devin CLI를 찾을 수 없음"}
-        </span>
-        {info?.path && !info.authenticated && !info.session_token && (
-          <button className="small primary" disabled={loggingIn} onClick={startLogin}>
-            {loggingIn ? "로그인 진행중…" : "로그인"}
-          </button>
-        )}
-        {loginUrl && (
-          <button className="small" onClick={() => api.urlOpen(loginUrl)}>
-            브라우저로 열기 ↗
-          </button>
-        )}
-        <div className="tabs">
-          {TABS.map(([k, label]) => (
-            <button key={k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
-              {label}
+    <div className="shell">
+      <Sidebar />
+      <div className="content">
+        <div className="topbar">
+          <div className="crumb">
+            <span className="crumb-project">{project?.name ?? "프로젝트 없음"}</span>
+            <span className="crumb-sep">/</span>
+            <span className="crumb-view">{TITLES[view]}</span>
+          </div>
+          <div className="topbar-right">
+            <span className={`devin-status ${authed ? "ok" : "warn"}`} title={info?.auth_detail ?? ""}>
+              {info?.path
+                ? `${String(info.version ?? "").replace(/^devin\s+/, "devin ").split(" (")[0]} · ${info.authenticated ? "CLI 인증" : info.session_token ? "ACP 토큰" : "미인증"}`
+                : "devin CLI 없음"}
+            </span>
+            {info?.path && !authed && (
+              <button className="small primary" disabled={loginState.busy} onClick={startLogin}>
+                {loginState.busy ? "로그인 진행중…" : "로그인"}
+              </button>
+            )}
+            {loginState.url && (
+              <button className="small" onClick={() => api.urlOpen(loginState.url!)}>브라우저로 열기 ↗</button>
+            )}
+            <button className={`small icon-btn ${activityOpen ? "active" : ""}`} title="활동 패널"
+              onClick={() => set({ activityOpen: !activityOpen })}>
+              ◫ 활동{pendingPerms ? <span className="pill warn">{pendingPerms}</span> : null}
             </button>
-          ))}
+          </div>
+        </div>
+        <div className="body">
+          <div className="main">
+            {view === "pipeline" && <PipelineView />}
+            {view === "loop" && <LoopView />}
+            {view === "docs" && <DocsView />}
+            {view === "workers" && <WorkersView />}
+            {view === "skills" && <SkillsView />}
+            {view === "settings" && <SettingsView />}
+            {/* terminal stays mounted so xterm keeps its buffer across views */}
+            <div style={{ display: view === "terminal" ? "flex" : "none", flex: 1, minHeight: 0 }}>
+              <TerminalView active={view === "terminal"} />
+            </div>
+          </div>
+          {activityOpen && <ActivityPanel />}
         </div>
       </div>
-      <div className="main">
-        {tab === "workers" && <WorkersTab devinInfo={info} />}
-        {tab === "research" && <ResearchTab defaultModel={settings?.default_model} />}
-        {tab === "develop" && <DevelopTab defaultModel={settings?.default_model} />}
-        {tab === "tasks" && <TasksTab />}
-        {tab === "skills" && <SkillsTab />}
-        {tab === "terminal" && <TerminalTab devinPath={info?.path} />}
-        {tab === "settings" && <SettingsTab settings={settings} onSaved={refresh} />}
-      </div>
-    </>
+      {perms.length > 0 && <PermissionModal req={perms[0]} />}
+      {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
+    </div>
   );
 }

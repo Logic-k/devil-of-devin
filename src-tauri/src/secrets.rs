@@ -6,17 +6,33 @@ use crate::state::AppState;
 const SERVICE: &str = "devil-of-devin";
 const PREFIX: &str = "$secret:";
 
+pub fn get(name: &str) -> Option<String> {
+    keyring::Entry::new(SERVICE, name)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+}
+
 /// Resolve env values of the form `$secret:NAME` from Windows Credential Manager.
 /// Plain values pass through unchanged; missing secrets become empty strings.
 pub fn resolve_env(env: &mut HashMap<String, String>) {
     for v in env.values_mut() {
         if let Some(name) = v.strip_prefix(PREFIX) {
-            let resolved = keyring::Entry::new(SERVICE, name)
-                .ok()
-                .and_then(|e| e.get_password().ok())
-                .unwrap_or_default();
-            *v = resolved;
+            *v = get(name).unwrap_or_default();
         }
+    }
+}
+
+/// Same substitution for arbitrary JSON (MCP server configs: headers, env, args).
+pub fn resolve_json(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::String(s) => {
+            if let Some(name) = s.strip_prefix(PREFIX) {
+                *s = get(name).unwrap_or_default();
+            }
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(resolve_json),
+        serde_json::Value::Object(o) => o.values_mut().for_each(resolve_json),
+        _ => {}
     }
 }
 
@@ -32,10 +48,7 @@ pub fn secret_set(_state: State<'_, AppState>, name: String, value: String) -> R
 /// Returns true if a secret exists (value is never returned to the UI).
 #[tauri::command]
 pub fn secret_exists(_state: State<'_, AppState>, name: String) -> bool {
-    keyring::Entry::new(SERVICE, &name)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .is_some()
+    get(&name).is_some()
 }
 
 #[tauri::command]

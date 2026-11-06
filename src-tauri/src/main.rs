@@ -1,15 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod acp;
-mod develop;
 mod devin_cli;
+mod harness;
 mod hooks;
+mod looprun;
+mod project;
 mod pty;
 mod research;
 mod secrets;
 mod skills;
 mod state;
-mod tasks;
 mod workers;
 
 use state::AppState;
@@ -66,6 +67,7 @@ fn main() {
             acp::acp_session_new,
             acp::acp_session_load,
             acp::acp_prompt,
+            acp::acp_set_mode,
             acp::acp_cancel,
             acp::acp_permission_respond,
             acp::acp_kill,
@@ -75,25 +77,44 @@ fn main() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
-            // workers / orchestration
+            // workers
             workers::worker_create,
             workers::worker_prompt,
+            workers::worker_set_mode,
             workers::worker_list,
             workers::worker_stop,
             workers::worker_delete,
+            workers::worker_saved_list,
+            workers::worker_forget_saved,
+            // projects / docs
+            project::project_list,
+            project::project_add,
+            project::project_remove,
+            project::project_set_active,
+            project::project_stages,
+            project::project_docs,
+            project::project_file_read,
+            project::project_file_write,
+            project::project_git_info,
+            // harness skill pack
+            harness::harness_status,
+            harness::harness_install,
+            // loop engine
+            looprun::loop_start,
+            looprun::loop_status,
+            looprun::loop_list,
+            looprun::loop_stop,
+            looprun::loop_board,
+            looprun::loop_task_set_status,
             // research pipeline
             research::research_start,
             research::research_status,
-            // develop pipeline
-            develop::develop_start,
-            develop::develop_status,
+            research::research_list,
             // hooks
             hooks::hook_server_start,
             hooks::hook_server_stop,
+            hooks::hook_server_status,
             hooks::hooks_inject,
-            // tasks board
-            tasks::tasks_load,
-            tasks::tasks_save,
             // secrets (windows credential manager)
             secrets::secret_set,
             secrets::secret_exists,

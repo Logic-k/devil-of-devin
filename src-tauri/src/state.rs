@@ -8,28 +8,45 @@ pub struct AppState {
     pub ptys: Mutex<HashMap<String, Arc<crate::pty::PtySession>>>,
     pub workers: Mutex<HashMap<String, crate::workers::Worker>>,
     pub research: Mutex<HashMap<String, crate::research::ResearchRun>>,
-    pub develop: Mutex<HashMap<String, crate::develop::DevelopRun>>,
+    pub loops: Mutex<HashMap<String, crate::looprun::LoopRun>>,
+    /// Stop flags for running loops (run id → requested stop kind).
+    pub loop_ctl: Mutex<HashMap<String, crate::looprun::LoopControl>>,
     pub hook_server: Mutex<Option<crate::hooks::HookServer>>,
     pub settings: Mutex<Settings>,
     pub http: reqwest::Client,
+    /// Serializes heavy gate commands (builds, browsers) across loops.
+    pub heavy: tokio::sync::Semaphore,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        let settings = Settings::load();
+        let heavy = settings.loop_heavy_concurrency.max(1) as usize;
         Self {
             acp: Mutex::new(HashMap::new()),
             ptys: Mutex::new(HashMap::new()),
             workers: Mutex::new(HashMap::new()),
             research: Mutex::new(HashMap::new()),
-            develop: Mutex::new(HashMap::new()),
+            loops: Mutex::new(HashMap::new()),
+            loop_ctl: Mutex::new(HashMap::new()),
             hook_server: Mutex::new(None),
-            settings: Mutex::new(Settings::load()),
+            settings: Mutex::new(settings),
             http: reqwest::Client::builder()
-                .user_agent("devil-of-devin/0.1")
+                .user_agent("devil-of-devin/0.2")
                 .build()
                 .unwrap_or_default(),
+            heavy: tokio::sync::Semaphore::new(heavy),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,16 +54,30 @@ impl AppState {
 pub struct Settings {
     pub devin_path: String,
     pub default_model: String,
+    /// ACP session mode id: accept-edits | smart | ask | plan | bypass
     pub default_permission_mode: String,
     pub hook_port: u16,
     pub auto_install_hooks: bool,
     pub skills_dirs: Vec<String>,
-    pub github_token: Option<String>,
     /// Extra MCP server configs injected into every worker's session/new.
     /// (ACP `mcpServers` array — stdio `{name,command,args,env}` or http `{name,url,headers}`)
+    /// String values may use `$secret:NAME`.
     pub mcp_servers: Vec<serde_json::Value>,
     /// Extra env vars injected into every spawned worker process.
     pub worker_env: std::collections::HashMap<String, String>,
+    pub projects: Vec<Project>,
+    pub active_project: Option<String>,
+    // ---- loop engine ----
+    pub loop_concurrency: u32,
+    pub loop_heavy_concurrency: u32,
+    pub loop_use_worktrees: bool,
+    pub loop_max_attempts: u32,
+    pub loop_gate_timeout_secs: u64,
+    pub loop_implementer_model: String,
+    pub loop_validator_model: String,
+    pub loop_mode: String,
+    /// Pin for the harness skill pack (git ref), empty = default branch HEAD.
+    pub harness_ref: String,
 }
 
 impl Default for Settings {
@@ -58,19 +89,31 @@ impl Default for Settings {
             hook_port: 0,
             auto_install_hooks: true,
             skills_dirs: Vec::new(),
-            github_token: None,
             mcp_servers: Vec::new(),
             worker_env: std::collections::HashMap::new(),
+            projects: Vec::new(),
+            active_project: None,
+            loop_concurrency: 2,
+            loop_heavy_concurrency: 1,
+            loop_use_worktrees: true,
+            loop_max_attempts: 3,
+            loop_gate_timeout_secs: 1800,
+            loop_implementer_model: String::new(),
+            loop_validator_model: String::new(),
+            loop_mode: "smart".into(),
+            harness_ref: String::new(),
         }
     }
 }
 
 impl Settings {
-    pub fn path() -> std::path::PathBuf {
+    pub fn dir() -> std::path::PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("devil-of-devin")
-            .join("settings.json")
+    }
+    pub fn path() -> std::path::PathBuf {
+        Self::dir().join("settings.json")
     }
 
     pub fn load() -> Self {

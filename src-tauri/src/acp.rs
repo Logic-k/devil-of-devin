@@ -4,18 +4,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
+
+/// Default timeout for short control calls (initialize / authenticate / session/new).
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// One spawned `devin acp` subprocess speaking JSON-RPC over stdio.
 pub struct AcpAgent {
     pub id: String,
     pub cwd: String,
     pub model: Option<String>,
+    /// Free-form label shown in the UI ("worker", "loop:phase-01-task-02", ...).
+    pub label: String,
     child: AsyncMutex<Child>,
     stdin: AsyncMutex<ChildStdin>,
     next_id: AtomicU64,
@@ -24,10 +30,36 @@ pub struct AcpAgent {
     pub init: Mutex<Option<Value>>,
     /// When true, permission requests are auto-answered with the most permissive
     /// `allow_*` option instead of being forwarded to the UI.
-    pub auto_approve: std::sync::atomic::AtomicBool,
+    pub auto_approve: AtomicBool,
     /// Set once `authenticate` succeeded (token or browser) for this process.
-    pub authed: std::sync::atomic::AtomicBool,
+    pub authed: AtomicBool,
+    /// True once the stdout reader observed EOF (process gone).
+    pub exited: AtomicBool,
+    /// When set, agent_message_chunk text is accumulated into `collected`
+    /// (used by pipeline workers that need the final answer as a string).
+    pub collect: AtomicBool,
+    collected: Mutex<String>,
+    /// Running token totals from `usage_update` / prompt results.
+    pub usage: Mutex<Usage>,
     pub app: AppHandle,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Usage {
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub prompts: u64,
+}
+
+impl Usage {
+    pub fn add_from(&mut self, v: &Value) {
+        let g = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        self.total_tokens += g("totalTokens");
+        self.input_tokens += g("inputTokens");
+        self.output_tokens += g("outputTokens");
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,10 +70,13 @@ pub struct SpawnOpts {
     pub cloud: bool,
     pub auto_approve: bool,
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 impl AcpAgent {
-    /// Spawn `devin acp`, start the stdout reader, run `initialize`.
+    /// Spawn `devin acp`, start the stdout/stderr readers, run `initialize`,
+    /// then try the stored session token for a silent `authenticate`.
     pub async fn spawn(
         state: &crate::state::AppState,
         app: AppHandle,
@@ -49,7 +84,10 @@ impl AcpAgent {
         opts: SpawnOpts,
     ) -> anyhow::Result<Arc<AcpAgent>> {
         let devin = crate::devin_cli::find_devin(&state.settings.lock().devin_path)
-            .ok_or_else(|| anyhow!("devin CLI not found — set devin_path in settings"))?;
+            .ok_or_else(|| anyhow!("devin CLI를 찾을 수 없습니다 — 설정에서 devin_path를 지정하세요"))?;
+        if !std::path::Path::new(&opts.cwd).is_dir() {
+            return Err(anyhow!("작업 디렉터리가 없습니다: {}", opts.cwd));
+        }
 
         let mut cmd = Command::new(devin);
         cmd.arg("acp");
@@ -65,7 +103,10 @@ impl AcpAgent {
         cmd.current_dir(&opts.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
+        // CREATE_NO_WINDOW — never flash a console for the child.
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
         for (k, v) in &opts.env {
             cmd.env(k, v);
         }
@@ -73,19 +114,25 @@ impl AcpAgent {
         let mut child = cmd.spawn().context("spawn devin acp")?;
         let stdin = child.stdin.take().context("stdin")?;
         let stdout = child.stdout.take().context("stdout")?;
+        let stderr = child.stderr.take().context("stderr")?;
 
         let agent = Arc::new(AcpAgent {
             id: id.clone(),
             cwd: opts.cwd.clone(),
             model: opts.model.clone(),
+            label: opts.label.clone().unwrap_or_else(|| "agent".into()),
             child: AsyncMutex::new(child),
             stdin: AsyncMutex::new(stdin),
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashSet::new()),
             init: Mutex::new(None),
-            auto_approve: std::sync::atomic::AtomicBool::new(opts.auto_approve),
-            authed: std::sync::atomic::AtomicBool::new(false),
+            auto_approve: AtomicBool::new(opts.auto_approve),
+            authed: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
+            collect: AtomicBool::new(false),
+            collected: Mutex::new(String::new()),
+            usage: Mutex::new(Usage::default()),
             app: app.clone(),
         });
 
@@ -100,20 +147,35 @@ impl AcpAgent {
                         _ => break,
                     }
                 }
+                agent.exited.store(true, Ordering::SeqCst);
+                // fail every in-flight call instead of leaving callers hanging
+                let waiters: Vec<_> = agent.pending.lock().drain().map(|(_, tx)| tx).collect();
+                for tx in waiters {
+                    let _ = tx.send(Err("에이전트 프로세스가 종료되었습니다".into()));
+                }
                 let code = {
                     let mut c = agent.child.lock().await;
                     c.try_wait().ok().flatten().and_then(|s| s.code())
                 };
-                let _ = agent.app.emit(
-                    &format!("acp://exit/{}", agent.id),
-                    json!({ "code": code }),
-                );
+                agent.emit("exit", json!({ "code": code }));
+            });
+        }
+        // stderr reader: devin logs tracing lines here; surface WARN/ERROR only
+        {
+            let agent = agent.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if line.contains(" WARN ") || line.contains(" ERROR ") || line.contains("panicked") {
+                        agent.emit("log", json!({ "line": line, "stderr": true }));
+                    }
+                }
             });
         }
 
         // initialize handshake
         let init = agent
-            .call(
+            .call_timeout(
                 "initialize",
                 json!({
                     "protocolVersion": 1,
@@ -121,8 +183,9 @@ impl AcpAgent {
                         "fs": { "readTextFile": false, "writeTextFile": false },
                         "terminal": false
                     },
-                    "clientInfo": { "name": "devil-of-devin", "title": "Devil of Devin", "version": "0.1.0" }
+                    "clientInfo": { "name": "devil-of-devin", "title": "Devil of Devin", "version": "0.2.0" }
                 }),
+                CONTROL_TIMEOUT,
             )
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
@@ -133,14 +196,21 @@ impl AcpAgent {
         if let Some(k) = read_session_api_key() {
             if authenticate_apikey(&agent, &k).await.is_ok() {
                 agent.authed.store(true, Ordering::SeqCst);
-                let _ = agent.app.emit(
-                    &format!("acp://log/{}", agent.id),
-                    json!({ "line": "acp authed via session token" }),
-                );
+                agent.emit("log", json!({ "line": "acp authed via session token" }));
             }
         }
 
         Ok(agent)
+    }
+
+    /// Emit both the per-agent event (`acp://{kind}/{id}`) and the global
+    /// stream (`acp://event`) the frontend store subscribes to once.
+    pub fn emit(&self, kind: &str, payload: Value) {
+        let _ = self.app.emit(&format!("acp://{kind}/{}", self.id), payload.clone());
+        let _ = self.app.emit(
+            "acp://event",
+            json!({ "agentId": self.id, "label": self.label, "kind": kind, "payload": payload }),
+        );
     }
 
     async fn on_line(&self, line: &str) {
@@ -151,16 +221,10 @@ impl AcpAgent {
         let msg: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => {
-                let _ = self.app.emit(
-                    &format!("acp://log/{}", self.id),
-                    json!({ "line": line }),
-                );
+                self.emit("log", json!({ "line": line }));
                 return;
             }
         };
-        let _ = self
-            .app
-            .emit(&format!("acp://raw/{}", self.id), msg.clone());
 
         let is_request = msg.get("method").is_some() && msg.get("id").is_some();
         let is_notify = msg.get("method").is_some() && msg.get("id").is_none();
@@ -169,7 +233,11 @@ impl AcpAgent {
         if is_response {
             let id = msg.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
             let res = if let Some(err) = msg.get("error") {
-                Err(err.get("message").and_then(|m| m.as_str()).unwrap_or("acp error").to_string())
+                Err(err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("acp error")
+                    .to_string())
             } else {
                 Ok(msg.get("result").cloned().unwrap_or(Value::Null))
             };
@@ -183,15 +251,16 @@ impl AcpAgent {
             let method = msg["method"].as_str().unwrap_or("").to_string();
             let params = msg.get("params").cloned().unwrap_or(Value::Null);
             if method == "session/update" {
-                let _ = self.app.emit(
-                    &format!("acp://update/{}", self.id),
-                    params.clone(),
-                );
+                let update = params.get("update").cloned().unwrap_or(Value::Null);
+                let kind = update.get("sessionUpdate").and_then(|s| s.as_str()).unwrap_or("");
+                if kind == "agent_message_chunk" && self.collect.load(Ordering::SeqCst) {
+                    if let Some(t) = update.pointer("/content/text").and_then(|t| t.as_str()) {
+                        self.collected.lock().push_str(t);
+                    }
+                }
+                self.emit("update", params);
             } else {
-                let _ = self.app.emit(
-                    &format!("acp://notify/{}", self.id),
-                    json!({ "method": method, "params": params }),
-                );
+                self.emit("notify", json!({ "method": method, "params": params }));
             }
             return;
         }
@@ -210,9 +279,7 @@ impl AcpAgent {
                             .unwrap_or_default();
                         let pick = options
                             .iter()
-                            .find(|o| {
-                                o.get("kind").and_then(|k| k.as_str()) == Some("allow_always")
-                            })
+                            .find(|o| o.get("kind").and_then(|k| k.as_str()) == Some("allow_always"))
                             .or_else(|| {
                                 options.iter().find(|o| {
                                     o.get("kind")
@@ -233,23 +300,14 @@ impl AcpAgent {
                                 "result": { "outcome": { "outcome": "selected", "optionId": oid } }
                             });
                             let _ = self.write_line(&resp.to_string()).await;
-                            let _ = self.app.emit(
-                                &format!("acp://auto-permission/{}", self.id),
-                                json!({ "params": params, "picked": oid }),
-                            );
+                            self.emit("auto-permission", json!({ "params": params, "picked": oid }));
                             return;
                         }
                     }
-                    let _ = self.app.emit(
-                        &format!("acp://permission/{}", self.id),
-                        json!({ "rpcId": id, "params": params }),
-                    );
+                    self.emit("permission", json!({ "rpcId": id, "params": params }));
                 }
                 "elicitation/create" => {
-                    let _ = self.app.emit(
-                        &format!("acp://elicitation/{}", self.id),
-                        json!({ "rpcId": id, "params": params }),
-                    );
+                    self.emit("elicitation", json!({ "rpcId": id, "params": params }));
                 }
                 _ => {
                     // Not handled (fs/*, terminal/*) — we didn't advertise them; refuse politely.
@@ -271,16 +329,28 @@ impl AcpAgent {
         Ok(())
     }
 
-    /// JSON-RPC call → await response.
+    /// JSON-RPC call → await response (no timeout; prompts can run for a long time).
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        if self.exited.load(Ordering::SeqCst) {
+            return Err("에이전트 프로세스가 종료되었습니다".into());
+        }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().insert(id, tx);
         let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        self.write_line(&req.to_string())
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Err(e) = self.write_line(&req.to_string()).await {
+            self.pending.lock().remove(&id);
+            return Err(e.to_string());
+        }
         rx.await.map_err(|_| "agent closed".to_string())?
+    }
+
+    /// Call with a deadline — used for control-plane requests that must not hang.
+    pub async fn call_timeout(&self, method: &str, params: Value, dur: Duration) -> Result<Value, String> {
+        match tokio::time::timeout(dur, self.call(method, params)).await {
+            Ok(r) => r,
+            Err(_) => Err(format!("{method} 응답 시간 초과 ({}s)", dur.as_secs())),
+        }
     }
 
     /// Raw respond to an agent→client request (permission etc).
@@ -289,14 +359,13 @@ impl AcpAgent {
         self.write_line(&resp.to_string()).await
     }
 
-    #[allow(dead_code)]
-    pub async fn session_new(&self, cwd: &str) -> Result<Value, String> {
-        self.session_new_mcp(cwd, vec![]).await
-    }
-
     pub async fn session_new_mcp(&self, cwd: &str, mcp_servers: Vec<Value>) -> Result<Value, String> {
         let r = self
-            .call("session/new", json!({ "cwd": cwd, "mcpServers": mcp_servers }))
+            .call_timeout(
+                "session/new",
+                json!({ "cwd": cwd, "mcpServers": mcp_servers }),
+                CONTROL_TIMEOUT,
+            )
             .await?;
         if let Some(sid) = r.get("sessionId").and_then(|s| s.as_str()) {
             self.sessions.lock().insert(sid.to_string());
@@ -305,9 +374,16 @@ impl AcpAgent {
     }
 
     /// True if the error looks like an auth_required / not-logged-in response.
+    /// Deliberately narrow: a generic "author"/"authority" substring must not
+    /// trigger a browser login.
     pub fn is_auth_error(e: &str) -> bool {
         let l = e.to_lowercase();
-        l.contains("auth") || l.contains("login") || l.contains("credential")
+        l.contains("auth_required")
+            || l.contains("not authenticated")
+            || l.contains("unauthenticated")
+            || l.contains("not logged in")
+            || l.contains("login required")
+            || l.contains("authentication required")
     }
 
     /// Trigger the `authenticate` flow with the first advertised method
@@ -320,15 +396,17 @@ impl AcpAgent {
             .and_then(|i| i.get("authMethods")?.as_array()?.first()?.get("id")?.as_str())
             .unwrap_or("devin-browser")
             .to_string();
-        self.call("authenticate", json!({ "methodId": method_id })).await
+        self.call_timeout("authenticate", json!({ "methodId": method_id }), Duration::from_secs(300))
+            .await
     }
 
     /// Resume an existing session (replays history via session/update events).
     pub async fn session_load(&self, session_id: &str, cwd: &str) -> Result<Value, String> {
         let r = self
-            .call(
+            .call_timeout(
                 "session/load",
                 json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": [] }),
+                CONTROL_TIMEOUT,
             )
             .await?;
         self.sessions.lock().insert(session_id.to_string());
@@ -354,15 +432,39 @@ impl AcpAgent {
         }
     }
 
-    pub async fn prompt(&self, session_id: &str, text: &str) -> Result<Value, String> {
-        self.call(
-            "session/prompt",
-            json!({
-                "sessionId": session_id,
-                "prompt": [{ "type": "text", "text": text }]
-            }),
+    /// Switch the session's permission mode (`accept-edits` | `smart` | `ask` | `plan` | `bypass`).
+    pub async fn set_mode(&self, session_id: &str, mode: &str) -> Result<Value, String> {
+        self.call_timeout(
+            "session/set_mode",
+            json!({ "sessionId": session_id, "modeId": mode }),
+            Duration::from_secs(30),
         )
         .await
+    }
+
+    pub async fn prompt(&self, session_id: &str, text: &str) -> Result<Value, String> {
+        let r = self
+            .call(
+                "session/prompt",
+                json!({
+                    "sessionId": session_id,
+                    "prompt": [{ "type": "text", "text": text }]
+                }),
+            )
+            .await;
+        if let Ok(v) = &r {
+            let mut u = self.usage.lock();
+            u.prompts += 1;
+            // prompt results carry authoritative per-turn usage
+            // (usage_update notifications are only streamed for display).
+            if let Some(us) = v.get("usage") {
+                u.add_from(us);
+            }
+            let snapshot = u.clone();
+            drop(u);
+            self.emit("usage", serde_json::to_value(snapshot).unwrap_or(Value::Null));
+        }
+        r
     }
 
     pub async fn cancel(&self, session_id: &str) -> anyhow::Result<()> {
@@ -378,6 +480,17 @@ impl AcpAgent {
 
     pub async fn kill(&self) {
         let _ = self.child.lock().await.kill().await;
+    }
+
+    /// Start/stop collecting agent text; `take_collected` returns and clears it.
+    pub fn set_collect(&self, on: bool) {
+        self.collect.store(on, Ordering::SeqCst);
+        if on {
+            self.collected.lock().clear();
+        }
+    }
+    pub fn take_collected(&self) -> String {
+        std::mem::take(&mut *self.collected.lock())
     }
 }
 
@@ -402,9 +515,10 @@ pub fn read_session_api_key() -> Option<String> {
 /// Authenticate via `_meta.api_key` (session token — no browser popup).
 pub async fn authenticate_apikey(agent: &AcpAgent, key: &str) -> Result<Value, String> {
     agent
-        .call(
+        .call_timeout(
             "authenticate",
             json!({ "methodId": "devin-browser", "_meta": { "api_key": key } }),
+            CONTROL_TIMEOUT,
         )
         .await
 }
@@ -421,12 +535,7 @@ pub async fn ensure_authed(agent: &AcpAgent) -> Result<(), String> {
                 agent.authed.store(true, Ordering::SeqCst);
                 return Ok(());
             }
-            Err(e) => {
-                let _ = agent.app.emit(
-                    &format!("acp://log/{}", agent.id),
-                    json!({ "line": format!("api_key auth failed: {e}") }),
-                );
-            }
+            Err(e) => agent.emit("log", json!({ "line": format!("api_key auth failed: {e}") })),
         }
     }
     agent.authenticate().await?;
@@ -434,7 +543,7 @@ pub async fn ensure_authed(agent: &AcpAgent) -> Result<(), String> {
     Ok(())
 }
 
-fn get_agent(state: &crate::state::AppState, id: &str) -> Result<Arc<AcpAgent>, String> {
+pub fn get_agent(state: &crate::state::AppState, id: &str) -> Result<Arc<AcpAgent>, String> {
     state
         .acp
         .lock()
@@ -517,6 +626,16 @@ pub async fn acp_prompt(
 }
 
 #[tauri::command]
+pub async fn acp_set_mode(
+    state: tauri::State<'_, crate::state::AppState>,
+    agent: String,
+    session: String,
+    mode: String,
+) -> Result<Value, String> {
+    get_agent(&state, &agent)?.set_mode(&session, &mode).await
+}
+
+#[tauri::command]
 pub async fn acp_cancel(
     state: tauri::State<'_, crate::state::AppState>,
     agent: String,
@@ -561,7 +680,9 @@ pub fn acp_list(state: tauri::State<'_, crate::state::AppState>) -> Value {
         .iter()
         .map(|(id, a)| {
             json!({
-                "id": id, "cwd": a.cwd, "model": a.model,
+                "id": id, "cwd": a.cwd, "model": a.model, "label": a.label,
+                "exited": a.exited.load(Ordering::SeqCst),
+                "usage": a.usage.lock().clone(),
                 "sessions": a.sessions.lock().iter().cloned().collect::<Vec<_>>()
             })
         })

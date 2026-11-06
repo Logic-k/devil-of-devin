@@ -179,8 +179,9 @@ pub fn url_open(url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("only http(s) urls".into());
     }
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", &url])
+    // `explorer <url>` opens the default browser and does not interpret `&` like cmd does
+    std::process::Command::new("explorer.exe")
+        .arg(&url)
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
