@@ -63,7 +63,7 @@ export default function App() {
         <span className="logo"><span className="logo-mark">😈</span> Devil of Devin</span>
         <span className={`devin-status ${(info?.authenticated || info?.session_token) ? "ok" : ""}`}>
           {info?.path
-            ? `devin ${info.version ?? ""} · ${info.authenticated ? "CLI认证" : info.session_token ? "ACP令牌可用" : "미인증"}`
+            ? `devin ${info.version ?? ""} · ${info.authenticated ? "CLI 인증됨" : info.session_token ? "ACP 토큰 사용 가능" : "미인증"}`
             : "devin CLI를 찾을 수 없음"}
         </span>
         {info?.path && !info.authenticated && !info.session_token && (

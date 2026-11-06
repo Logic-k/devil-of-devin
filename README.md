@@ -26,13 +26,13 @@ npm run tauri build    # 배포용 .exe / .msi 생성 → src-tauri/target/relea
 
 | 탭 | 기능 |
 |---|---|
-| **워커** | `devin acp` 에이전트 스폰 → `session/new` 자동 생성. 이름/cwd/모델/역할/자동승인 설정, 프롬프트 스트리밍(메시지·생각·툴콜·플랜), 권한 요청 승인/거절, `session/load`로 이전 세션 이어받기(리플레이 포함), 다중 워커 병렬 관리 |
+| **워커** | `devin acp` 에이전트 스폰 → `session/new` 자동 생성. 이름/cwd/모델/역할/자동승인 설정, 프롬프트 스트리밍(메시지·생각·툴콜·플랜), 권한 요청 승인/거절, `session/load`로 이전 세션 이어받기(리플레이 포함), `session/list` 세션 목록 선택, 다중 워커 병렬 관리 |
 | **리서치** | 브리프 입력 → 플래너→리서처 N회→비평가 M회 파이프라인(oneshot 워커) → `research/*.md` 산출물. 반복 횟수·모델 설정 가능 |
-| **개발** | 프로젝트 cwd 선택 → 리서치 md 컨텍스트 주입 후 개발 워커 실행, 진행 상태 스트리밍 |
+| **개발** | 프로젝트 cwd 선택 → 리서치 md 컨텍스트 주입 후 개발 워커 실행, 진행 상태 스트리밍, 구현↔리뷰 사이클 |
 | **태스크** | 칸반식 보드 — 워커/파이프라인 작업 상태 추적, `tasks.json` 영속화 |
 | **스킬** | 로컬 스킬 스캔(`%APPDATA%\devin\skills`, `.agents\skills`, 플러그인 캐시 등), GitHub 검색·설치(`owner/repo#경로`), 활성/비활성 토글 — 설치 즉시 모든 워커가 사용 가능 |
-| **터미널** | ConPTY로 `devin` TUI 직접 사용, `devin -p` 원샷 프롬프트 |
-| **설정** | devin 경로, 기본 모델(`swe-2-max`), 권한 모드, 훅 서버, MCP 프리셋(Supabase/Vercel), 워커 env, 스킬 디렉터리 |
+| **터미널** | ConPTY로 `devin` TUI 직접 사용, 로그인 세션 연결 지원 |
+| **설정** | devin 경로, 기본 모델(`swe-2-max`), 권한 모드, 훅 서버, MCP 프리셋(Supabase/Vercel), 워커 env, 스킬 디렉터리, 시크릿 보관소 |
 
 ## 핵심 아키텍처
 
@@ -42,7 +42,7 @@ React UI ──invoke──> Rust commands ──stdio JSON-RPC──> devin.exe
 ```
 
 - `src-tauri/src/acp.rs` — ACP 클라이언트: 프로세스 스폰, `initialize` 핸드셰이크,
-  요청/알림 라우팅, 권한 요청 자동응답(`auto_approve`) 또는 UI 전달.
+  요청/알림 라우팅, **세션 토큰 자동 인증**, 권한 요청 자동응답(`auto_approve`) 또는 UI 전달.
 - `src-tauri/src/workers.rs` — 워커 = ACP 에이전트 1 + 세션 1.
   `run_oneshot_worker`는 리서치/개발 파이프라인의 일회성 워커.
 - `src-tauri/src/hooks.rs` — `127.0.0.1` 로컬 수신 서버. 앱 시작 시 자동 기동,
@@ -50,15 +50,22 @@ React UI ──invoke──> Rust commands ──stdio JSON-RPC──> devin.exe
   (기존 훅 보존) → 워커의 PreToolUse/Stop 등 라이프사이클 이벤트가 UI로 유입.
 - `src-tauri/src/skills.rs` — 스킬 스캔/설치/토글. GitHub code search(토큰
   없으면 repo search로 폴백) + `git clone --depth 1` 설치.
+- `src-tauri/src/secrets.rs` — Windows 자격증명 관리자(keyring) 시크릿 보관소.
 - 설정: `%APPDATA%\devil-of-devin\settings.json` — 모델, 권한 모드, 훅 포트,
   `mcp_servers`(모든 워커 `session/new`에 주입), `worker_env`, GitHub 토큰 등.
 
-## 인증
+## 인증 (중요 — 실측 기반)
 
-ACP는 호스트가 자격증명을 제공해야 한다(로컬 `credentials.toml` 미사용).
-앱은 `initialize` 응답의 `authMethods`를 보고 브라우저 로그인(`devin-browser`)
-플로우를 트리거한다 — 상단 바의 **로그인** 버튼 사용. 미인증 상태에서는
-워커 생성이 실패할 수 있으니 먼저 로그인.
+두 개의 서로 다른 인증 체계가 있다:
+
+1. **CLI 독립 로그인**(`devin auth login` → REPL/print 모드용): 대화형 TUI.
+   `devin auth status`는 `credentials.toml`의 세션 토큰(`devin-session-token$…`)을
+   인정하지 않아 항상 "Not logged in"으로 표시될 수 있다 — **오해 금지**.
+2. **ACP 인증**(이 앱이 쓰는 경로): `credentials.toml`의 `windsurf_api_key`를
+   `authenticate`의 `_meta.api_key`로 전달하면 바로 인증됨. 앱은 agent spawn 시
+   자동으로 이를 수행 → **로그인 버튼 없이 바로 워커 생성 가능**.
+
+로그인 버튼은 토큰 갱신용 폴백(PTY로 `auth login` 실행, 자동 Enter, URL 표시).
 
 ## MCP 자동화 (Vercel/Supabase)
 
@@ -74,7 +81,7 @@ ACP는 호스트가 자격증명을 제공해야 한다(로컬 `credentials.toml
 
 ## 리서치 산출물
 
-`D:\Devil_of_Devin\research\` — 프로젝트 브리프, Devin CLI 조사, ACP 프로토콜,
+`research/` — 프로젝트 브리프, Devin CLI 조사, ACP 프로토콜,
 레퍼런스(CommandCode/omo/Vibe Kanban/GPT Researcher 등), 오케스트레이션 기법,
 아키텍처 문서. 개발 모드는 이 디렉터리의 md를 컨텍스트로 읽는다.
 
