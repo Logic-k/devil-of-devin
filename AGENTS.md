@@ -48,8 +48,17 @@ MSVC는 `C:\Program Files\Microsoft Visual Studio\2022\Community` (VS Community,
 - 바이너리: `%LOCALAPPDATA%\devin\cli\bin\devin.exe` (현재 3000.11.234)
 - `devin acp` 는 디스크 자격증명을 **무시** → 호스트가 `authenticate` 호출해야 함
   (authMethods: `devin-browser` 하나). 미인증이면 `session/new`이 `auth_required` 에러.
-- 인증 공유: `devin auth login`(브라우저) 후 REPL/print 경로는 credentials.toml 사용.
-  ACP 경로는 호스트 authenticate 필요 → 앱은 lazy-auth: session/new 실패 시 authenticate 호출.
+- **실측 핵심**: `credentials.toml` 의 `windsurf_api_key`(`devin-session-token$...`
+  세션 토큰)를 `authenticate` 의 `_meta.api_key`로 넘기면 바로 인증 성공 —
+  `session/new`이 sessionId를 반환한다. **브라우저/`auth login` 불필요**.
+  `acp.rs: read_session_api_key / authenticate_apikey / ensure_authed`,
+  spawn 시 proactive auth, 실패 시 lazy + 브라우저 PKCE 폴백.
+- `devin auth status` / `devin -p` 의 "Not logged in"은 **로컬 전용 판정**으로
+  이 세션 토큰 타입을 인정하지 않음 — ACP 경로와 무관. UI 배지는
+  `devin_info.session_token` 을 표시한다.
+- `devin auth login`은 대화형 TUI: 파이프 stdin 불가, ConPTY에서도 `\x1b[6n`
+  등 터미널 쿼리에 응답해야 화면이 그려진다 → `pty.rs respond_to_queries`.
+  로그인 재시도는 상단 로그인 버튼(PTY + 자동 Enter).
 - 모델: `--model`(퍼지매칭), `DEVIN_MODEL`. 세션 중 모델/사고량 변경은 session config options.
 - `devin acp --agent-type review` = 읽기전용 리뷰어 워커.
 - Windows는 OS 샌드박스 미지원 → autonomous 불가; smart/bypass + permissions.deny 사용.
