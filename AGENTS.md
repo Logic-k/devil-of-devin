@@ -80,6 +80,11 @@ MSVC는 `C:\Program Files\Microsoft Visual Studio\2022\Community`.
   `acceptance_criteria`·`verification` — 상태 정본은 태스크 파일, 앱이 `status:` 줄만 고쳐 쓴다.
 - 게이트: `harness_setup/quality_gates/{lint,unit,e2e,task_validation}.md` — frontmatter `command:`
   또는 첫 ```bash|powershell|cmd 블록을 그대로 실행. 명령이 없으면 review 에이전트가 판정.
+- 시작 전 메인 체크아웃의 미커밋 변경을 스냅샷 커밋한다(`loop(<run>): 시작 전 작업 트리 스냅샷`, 설정으로 끌 수 있음).
+  워크트리는 HEAD에서 갈라지므로 이 커밋이 없으면 harness_setup/plan_setup 이 워크트리에 없다. `.devil/`과
+  `.devin/hooks.v1.json`은 조정자 파일이라 커밋하지 않는다(.git/info/exclude).
+- 보호 경로(harness_setup/, plan_setup/, loop_setup/)를 바꾼 브랜치는 통합 거부. 다음 배정 때 그 브랜치는
+  `loop/<id>-rejected-<ts>`로 보관하고 새 워크트리로 다시 시작한다.
 - 흐름: 워크트리 `.devil/worktrees/<id>` (브랜치 `loop/<id>`) → 구현 워커 → lint→unit→e2e →
   별도 세션 검증(`RESULT: PASS|FAIL` 마지막 줄) → `--no-ff` 병합 → 통합 후 lint/unit.
 - 시도: max_attempts(3) 초과 시 "전략 전환" 프롬프트, 총 2배까지. 실패/증거는

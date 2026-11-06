@@ -46,6 +46,10 @@ pub struct LoopConfig {
     /// Skip the independent validator (not harness-compliant; for dry runs).
     #[serde(default)]
     pub skip_validation: bool,
+    /// Commit uncommitted changes in the main checkout before the run, so worktrees branch
+    /// from the current state (harness_setup/plan_setup included). Default: true.
+    #[serde(default)]
+    pub snapshot_commit: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,9 +571,14 @@ fn parse_result_line(text: &str) -> Option<bool> {
 
 // ---------------------------------------------------------------- git helpers
 
-/// Commit everything except `.devil/` (coordinator artifacts) in `cwd`, if anything changed.
+/// Files the coordinator (app) owns inside a project: never committed by the loop.
+const COORDINATOR_FILES: [&str; 2] = [".devil/", ".devin/hooks.v1.json"];
+/// Paths a task branch must not change — the contract it is judged by.
+const PROTECTED_PATHS: [&str; 3] = ["harness_setup/", "plan_setup/", "loop_setup/"];
+
+/// Commit everything except the coordinator files in `cwd`, if anything changed.
 async fn auto_commit(cwd: &Path, msg: &str) {
-    let _ = git(cwd, &["add", "-A", "--", ".", ":(exclude).devil"]).await;
+    let _ = git(cwd, &["add", "-A", "--", ".", ":(exclude).devil", ":(exclude).devin/hooks.v1.json"]).await;
     if let Ok(st) = git(cwd, &["diff", "--cached", "--quiet"]).await {
         let _ = st; // nothing staged
         return;
@@ -577,20 +586,53 @@ async fn auto_commit(cwd: &Path, msg: &str) {
     let _ = git(cwd, &["commit", "-q", "-m", msg]).await;
 }
 
-/// Keep `.devil/` out of the project's git status without touching its .gitignore.
+/// Number of modified/untracked files in `cwd` (coordinator files excluded).
+async fn dirty_entries(cwd: &Path) -> usize {
+    git(
+        cwd,
+        &["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).devil", ":(exclude).devin/hooks.v1.json"],
+    )
+    .await
+    .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+    .unwrap_or(0)
+}
+
+/// Files under the protected (contract) paths that `branch` changed relative to HEAD.
+async fn protected_changes(root: &Path, branch: &str) -> Vec<String> {
+    git(root, &["diff", "--name-only", &format!("HEAD...{branch}")])
+        .await
+        .map(|s| {
+            s.lines()
+                .filter(|f| PROTECTED_PATHS.iter().any(|p| f.starts_with(p)))
+                .map(|f| f.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Keep the coordinator files out of the project's git status without touching its .gitignore.
 fn exclude_devil_dir(root: &Path) {
     let p = root.join(".git").join("info").join("exclude");
-    if let Ok(cur) = std::fs::read_to_string(&p) {
-        if cur.lines().any(|l| l.trim() == ".devil/") {
-            return;
-        }
+    let cur = std::fs::read_to_string(&p).unwrap_or_default();
+    let missing: Vec<&str> = COORDINATOR_FILES
+        .iter()
+        .copied()
+        .filter(|e| !cur.lines().any(|l| l.trim() == *e))
+        .collect();
+    if missing.is_empty() {
+        return;
     }
     if let Some(d) = p.parent() {
         let _ = std::fs::create_dir_all(d);
     }
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
-        let _ = writeln!(f, ".devil/");
+        if !cur.is_empty() && !cur.ends_with('\n') {
+            let _ = writeln!(f);
+        }
+        for e in missing {
+            let _ = writeln!(f, "{e}");
+        }
     }
 }
 
@@ -773,7 +815,7 @@ fn implementer_prompt(
     s.push('\n');
     if cwd != run.project {
         s.push_str(&format!(
-            "- 문서 정본(읽기 전용): `{}` (plan_setup/, harness_setup/, loop_setup/, docs/). 워크트리에는 미커밋 문서가 없을 수 있으니 정본을 **읽기만** 하세요. 그 폴더에서 파일을 바꾸거나 git 명령을 실행하지 마세요 — 모든 작업은 작업 폴더에서만 합니다.\n",
+            "- 문서 정본(읽기 전용): `{}` (plan_setup/, harness_setup/, loop_setup/, docs/). 작업 폴더에도 같은 사본이 있으니 그것을 읽고, 정본 폴더에서는 파일을 바꾸거나 git 명령을 실행하지 마세요 — 모든 작업은 작업 폴더에서만 합니다.\n",
             run.project
         ));
     }
@@ -953,6 +995,25 @@ async fn run_loop_inner(state: &AppState, app: AppHandle, run_id: &str) -> Resul
     log(state, &app, run_id, format!("Loop 시작 (run {run_id})"));
     if resolved.is_git {
         exclude_devil_dir(&root);
+    }
+    if resolved.is_git && resolved.use_worktrees {
+        // worktrees branch from HEAD: anything uncommitted here (harness_setup/, plan_setup/, code)
+        // would be missing there, and the workers end up re-creating the contract themselves.
+        let n = dirty_entries(&root).await;
+        if n > 0 && cfg.snapshot_commit.unwrap_or(true) {
+            auto_commit(&root, &format!("loop({run_id}): 시작 전 작업 트리 스냅샷")).await;
+            let left = dirty_entries(&root).await;
+            if left > 0 {
+                return Err(format!(
+                    "시작 전 스냅샷 커밋에 실패했습니다 ({left}개 남음) — 프로젝트에서 `git status`와 user.name/user.email 설정을 확인하세요"
+                ));
+            }
+            log(state, &app, run_id, format!("미커밋 변경 {n}개를 스냅샷 커밋함 — 워크트리가 현재 상태(harness_setup/plan_setup 포함)에서 갈라집니다"));
+        } else if n > 0 {
+            return Err(format!(
+                "작업 트리에 커밋되지 않은 변경이 {n}개 있습니다. 워크트리는 마지막 커밋에서 갈라지므로 harness_setup/plan_setup 등이 빠집니다. 커밋한 뒤 시작하거나 Loop 설정의 '시작 전 스냅샷 커밋'을 켜세요."
+            ));
+        }
     }
     let gates = load_gates(&project);
     let gate_names: Vec<String> = ["lint", "unit", "e2e", "task_validation"]
@@ -1191,18 +1252,12 @@ async fn integrate(
             // make sure everything in the worktree is committed
             auto_commit(Path::new(wt), &format!("loop({}): auto-commit before integrate", outcome.id)).await;
             // the branch must not rewrite the contract it is judged by
-            let protected = ["harness_setup/", "plan_setup/", "loop_setup/"];
-            if let Ok(changed) = git(root, &["diff", "--name-only", &format!("HEAD...{br}")]).await {
-                let bad: Vec<&str> = changed
-                    .lines()
-                    .filter(|f| protected.iter().any(|p| f.starts_with(p)))
-                    .collect();
-                if !bad.is_empty() {
-                    let msg = format!("보호 경로 변경으로 통합 거부: {} — 브랜치 `{br}` 보존", bad.join(", "));
-                    log(state, app, run_id, format!("{}: {msg}", outcome.id));
-                    finish_task(state, app, run_id, &project, &rel, "failed", &msg).await;
-                    return;
-                }
+            let bad = protected_changes(root, br).await;
+            if !bad.is_empty() {
+                let msg = format!("보호 경로 변경으로 통합 거부: {} — 브랜치 `{br}` 보존", bad.join(", "));
+                log(state, app, run_id, format!("{}: {msg}", outcome.id));
+                finish_task(state, app, run_id, &project, &rel, "failed", &msg).await;
+                return;
             }
             log(state, app, run_id, format!("{}: 통합 — `{br}` 병합", outcome.id));
             match git(root, &["merge", "--no-ff", "--no-edit", "-m", &format!("loop({}): integrate", outcome.id), br]).await {
@@ -1315,6 +1370,22 @@ async fn run_task(
     let (cwd, branch) = if resolved.use_worktrees && resolved.is_git {
         let wt_dir = root.join(".devil").join("worktrees").join(&task.id);
         let br = format!("loop/{}", task.id);
+        if wt_dir.exists() {
+            // a leftover branch that rewrote the contract is never resumed:
+            // keep it for evidence under another name and start over from the current HEAD
+            let bad = protected_changes(&root, &br).await;
+            if !bad.is_empty() {
+                let archived = format!("{br}-rejected-{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+                let _ = git(&root, &["worktree", "remove", "--force", &wt_dir.to_string_lossy()]).await;
+                let _ = git(&root, &["branch", "-m", &br, &archived]).await;
+                log(
+                    state,
+                    &app,
+                    run_id,
+                    format!("{}: 이전 브랜치가 보호 경로를 바꿔({}) `{archived}` 로 보관하고 새 워크트리에서 다시 시작", task.id, bad.join(", ")),
+                );
+            }
+        }
         if !wt_dir.exists() {
             let _ = git(&root, &["worktree", "prune"]).await;
             let wt_s = wt_dir.to_string_lossy().to_string();
@@ -1732,4 +1803,52 @@ mod tests {
         assert_eq!(parse_result_line("RESULT: FAIL\n"), Some(false));
         assert_eq!(parse_result_line("nothing"), None);
     }
+
+    async fn tmp_repo(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("dod-looprun-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]).await.unwrap();
+        git(&dir, &["config", "user.email", "t@t"]).await.unwrap();
+        git(&dir, &["config", "user.name", "t"]).await.unwrap();
+        std::fs::write(dir.join("README.md"), "x").unwrap();
+        git(&dir, &["add", "."]).await.unwrap();
+        git(&dir, &["commit", "-q", "-m", "init"]).await.unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn snapshot_commit_includes_untracked_docs_but_not_coordinator_files() {
+        let root = tmp_repo("snap").await;
+        std::fs::create_dir_all(root.join("harness_setup")).unwrap();
+        std::fs::write(root.join("harness_setup/HARNESS.md"), "h").unwrap();
+        std::fs::create_dir_all(root.join(".devil/loop")).unwrap();
+        std::fs::write(root.join(".devil/loop/run.json"), "{}").unwrap();
+        std::fs::create_dir_all(root.join(".devin")).unwrap();
+        std::fs::write(root.join(".devin/hooks.v1.json"), "{}").unwrap();
+        assert_eq!(dirty_entries(&root).await, 1);
+        auto_commit(&root, "snap").await;
+        assert_eq!(dirty_entries(&root).await, 0);
+        let files = git(&root, &["ls-files"]).await.unwrap();
+        assert!(files.contains("harness_setup/HARNESS.md"));
+        assert!(!files.contains(".devil/"));
+        assert!(!files.contains("hooks.v1.json"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn protected_changes_lists_only_contract_paths() {
+        let root = tmp_repo("prot").await;
+        git(&root, &["checkout", "-q", "-b", "loop/t1"]).await.unwrap();
+        std::fs::create_dir_all(root.join("harness_setup/quality_gates")).unwrap();
+        std::fs::write(root.join("harness_setup/quality_gates/lint.md"), "g").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/a.rs"), "fn a() {}").unwrap();
+        git(&root, &["add", "."]).await.unwrap();
+        git(&root, &["commit", "-q", "-m", "work"]).await.unwrap();
+        git(&root, &["checkout", "-q", "-"]).await.unwrap();
+        assert_eq!(protected_changes(&root, "loop/t1").await, vec!["harness_setup/quality_gates/lint.md".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
 }

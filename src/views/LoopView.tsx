@@ -22,7 +22,7 @@ export default function LoopView() {
   const [showLog, setShowLog] = useState(true);
   const [cfg, setCfg] = useState<any>({
     concurrency: "", useWorktrees: true, maxAttempts: "", budgetMinutes: "", phase: "",
-    implementerModel: "", validatorModel: "", mode: "", skipValidation: false, resume: false,
+    implementerModel: "", validatorModel: "", mode: "", skipValidation: false, resume: false, snapshotCommit: true,
   });
 
   const run = useMemo(() => {
@@ -65,6 +65,7 @@ export default function LoopView() {
         validatorModel: cfg.validatorModel || null,
         mode: cfg.mode || null,
         skipValidation: cfg.skipValidation,
+        snapshotCommit: cfg.snapshotCommit,
         resume,
       };
       await api.loopStart(config);
@@ -105,7 +106,9 @@ export default function LoopView() {
           <div className="row" style={{ marginLeft: "auto" }}>
             {!active && <button onClick={() => setCfgOpen((o) => !o)}>{cfgOpen ? "설정 닫기" : "설정"}</button>}
             {!active && <button className="primary" disabled={!tasks.length} onClick={() => start(false)}>▶ Loop 시작</button>}
-            {!active && run && run.status !== "done" && <button onClick={() => start(true)}>↻ 재개</button>}
+            {!active && run && (run.status !== "done" || merged.some((t) => t.status === "failed")) && (
+              <button title="실패한 태스크를 다시 시도합니다 (시도 횟수는 이어집니다)" onClick={() => start(true)}>↻ 재개 (실패 재시도)</button>
+            )}
             {active && <button onClick={() => api.loopStop(run.id, "stop")}>■ 중지 (진행 중 작업은 마무리)</button>}
             {active && <button className="danger" onClick={() => { if (confirm("워커를 즉시 종료할까요?")) api.loopStop(run.id, "abort"); }}>강제 중단</button>}
           </div>
@@ -135,6 +138,7 @@ export default function LoopView() {
               </select>
             </label>
             <label className="row small dim" style={{ alignSelf: "end" }}><input type="checkbox" checked={cfg.useWorktrees} onChange={(e) => setCfg({ ...cfg, useWorktrees: e.target.checked })} /> git 워크트리 격리</label>
+            <label className="row small dim" style={{ alignSelf: "end" }} title="워크트리는 마지막 커밋에서 갈라지므로, 시작 전에 메인 체크아웃의 미커밋 변경(harness_setup/plan_setup 포함)을 스냅샷 커밋합니다. 끄면 미커밋 변경이 있을 때 시작을 거부합니다."><input type="checkbox" checked={cfg.snapshotCommit} onChange={(e) => setCfg({ ...cfg, snapshotCommit: e.target.checked })} /> 시작 전 미커밋 변경 스냅샷 커밋</label>
             <label className="row small dim" style={{ alignSelf: "end" }}><input type="checkbox" checked={cfg.skipValidation} onChange={(e) => setCfg({ ...cfg, skipValidation: e.target.checked })} /> 독립 검증 생략 (비권장)</label>
           </div>
         )}
