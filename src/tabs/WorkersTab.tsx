@@ -60,8 +60,7 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
     const u = p?.update ?? {};
     switch (u.sessionUpdate) {
       case "user_message_chunk":
-        push({ kind: "user", text: u.content?.text ?? "" });
-        break;
+        break; // user text is already appended optimistically in send()
       case "agent_message_chunk":
         appendChunk(agent, "agent", u.content?.text ?? "");
         break;
@@ -165,21 +164,28 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
   };
 
   const send = async () => {
-    if (!activeAgent || !activeSession || !draft.trim()) return;
+    const text = draft.trim();
+    if (!text || busy) return;
+    if (!activeAgent || !activeSession) {
+      pushMsg(activeAgent ?? "none", {
+        kind: "system",
+        text: "세션이 준비되지 않았습니다. 좌측에서 워커를 선택하세요.",
+      });
+      return;
+    }
+    const agent = activeAgent;
+    setDraft("");
     setBusy(true);
+    // devin acp does not echo user_message_chunk — append the user msg ourselves
+    pushMsg(agent, { kind: "user", text });
     try {
       if (selected) {
-        await api.workerPrompt(selected.id, draft.trim());
+        await api.workerPrompt(selected.id, text);
       } else {
-        await api.acpPrompt(activeAgent, activeSession, draft.trim());
+        await api.acpPrompt(agent, activeSession, text);
       }
-      setDraft("");
     } catch (e) {
-      setMsgs((old) => ({
-        ...old,
-        [activeAgent]: [...(old[activeAgent] ?? []),
-          { kind: "system", text: `error: ${e}` }],
-      }));
+      pushMsg(agent, { kind: "system", text: `error: ${e}` });
     } finally { setBusy(false); }
   };
 
@@ -320,6 +326,17 @@ export default function WorkersTab({ devinInfo }: { devinInfo: any }) {
                   )}
                 </div>
               ))}
+              {busy && (
+                <div className="msg agent">
+                  <div className="who">agent</div>
+                  <div className="bubble dim">실행 중…</div>
+                </div>
+              )}
+              {!curMsgs.length && !busy && (
+                <div className="dim small" style={{ padding: 12 }}>
+                  {activeSession ? `세션 ${activeSession} — 프롬프트를 입력하세요.` : "세션 없음"}
+                </div>
+              )}
               <div ref={transcriptEnd} />
             </div>
             <div className="composer">
